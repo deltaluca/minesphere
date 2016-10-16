@@ -26,15 +26,19 @@ var Config = (function(){
         divisions: query_string["divisions"] || 3,
         mines: query_string["mines"] || 106,
         fov: query_string["fov"] || 120,
-        layback: query_string["layback"] || 1
+        layback: query_string["layback"] || 1,
+        normalize: !query_string["dont_normalize"]
     };
 })();
 
 var Board = (function(){
     var Board = {};
 
-    var X = 0.525731112119133606;
-    var Z = 0.850650808352039932;
+    var X = 1.0;
+    var Z = (1.0 + Math.sqrt(5.0)) / 2.0;
+    var il = 1 / Math.sqrt(X * X + Z * Z);
+    X *= il;
+    Z *= il;
     var vertices = [
         [ -X,  0,  Z ], // 0
         [  X,  0,  Z ], // 1
@@ -105,7 +109,7 @@ var Board = (function(){
             var ret = [ u[0] + v[0],
                         u[1] + v[1],
                         u[2] + v[2] ];
-            var rl = 1 / Math.sqrt(ret[0] * ret[0] + ret[1] * ret[1] + ret[2] * ret[2]);
+            var rl = Config.normalize ? 1 / Math.sqrt(ret[0] * ret[0] + ret[1] * ret[1] + ret[2] * ret[2]) : 0.5;
             ret[0] *= rl;
             ret[1] *= rl;
             ret[2] *= rl;
@@ -147,17 +151,18 @@ var Board = (function(){
         divide();
     }
 
-    var v0 = Board.triangles[0].vi[0];
-    var v1 = Board.triangles[0].vi[1];
-    var v2 = Board.triangles[0].vi[2];
-    var x = (v0[0] + v1[0] + v2[0]) / 3;
-    var y = (v0[1] + v1[1] + v2[1]) / 3;
-    var z = (v0[2] + v1[2] + v2[2]) / 3;
-    Board.maxLayback = Math.sqrt(x * x + y * y + z * z);
-
+    Board.maxLayback = 1.0;
     Board.vertexBuffer = new Float32Array(Board.triangles.length * 12);
     for (var i = 0; i < Board.triangles.length; ++i)
     {
+        var v0 = Board.triangles[i].vi[0];
+        var v1 = Board.triangles[i].vi[1];
+        var v2 = Board.triangles[i].vi[2];
+        var x = (v0[0] + v1[0] + v2[0]) / 3;
+        var y = (v0[1] + v1[1] + v2[1]) / 3;
+        var z = (v0[2] + v1[2] + v2[2]) / 3;
+        Board.maxLayback = Math.min(Board.maxLayback, Math.sqrt(x * x + y * y + z * z));
+
         for (var j = 0; j < 3; ++j)
         {
             for (var k = 0; k < 3; ++k)
@@ -435,7 +440,8 @@ Render.init = function ()
         varying vec3 outpos; \
         varying vec3 uvw; \
         \
-        void main() { \
+        void main() \
+        { \
             vec4 pos = rotation * vec4(position.xyz, 1.0); \
             pos.z -= layback; \
             gl_Position = projection * pos; \
@@ -456,15 +462,20 @@ Render.init = function ()
         \
         uniform sampler2D envmap; \
         \
-        void main() { \
+        vec3 getLighting(vec3 normal) \
+        { \
+            return texture2D(envmap, vec2(atan(normal.z, normal.x) * 0.15915494309 + 0.5, asin(normal.y) * 0.31830988618 + 0.5)).xyz; \
+        } \
+        void main() \
+        { \
             vec3 dpdx = dFdx(outpos); \
             vec3 dpdy = dFdy(outpos); \
-            vec3 normal = normalize(cross(dpdx, dpdy)); \
-            vec3 lighting = texture2D(envmap, vec2(atan(normal.z, normal.x) * 0.15915494309 + 0.5, asin(normal.y) * 0.31830988618 + 0.5)).xyz; \
-            float dl = fwidth(uvw.x);/*doesn't matter which we use*/ \
+            vec3 faceNormal = normalize(-cross(dpdx, dpdy)); \
+            vec3 faceLighting = getLighting(faceNormal); \
             float dist = min(uvw.x, min(uvw.y, uvw.z)); \
-            float edgeStrength = smoothstep(dl, 0.0, dist) * 0.15; \
-            vec3 color = lighting; \
+            float eps = fwidth(uvw.x); \
+            float edgeStrength = smoothstep(eps, 0.0, dist) * 0.15; \
+            vec3 color = faceLighting; \
             color = mix(color, vec3(0, 0, 0), edgeStrength); \
             gl_FragColor = vec4(color, 1.0); \
         } \
