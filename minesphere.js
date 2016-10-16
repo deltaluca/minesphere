@@ -32,26 +32,70 @@ var Board = (function(){
     var Board = {};
 
     // vertices after division are not unique, but no-one cares.
+    var X = 0.525731112119133606;
+    var Z = 0.850650808352039932;
     Board.vertices = [
-        [ 1.0, 0.0, 0.0], // 0
-        [-1.0, 0.0, 0.0], // 1
-        [ 0.0, 1.0, 0.0], // 2
-        [ 0.0,-1.0, 0.0], // 3
-        [ 0.0, 0.0, 1.0], // 4
-        [ 0.0, 0.0,-1.0]  // 5
+        [ -X,  0,  Z ], // 0
+        [  X,  0,  Z ], // 1
+        [ -X,  0, -Z ], // 2
+        [  X,  0, -Z ], // 3
+        [  0,  Z,  X ], // 4
+        [  0,  Z, -X ], // 5
+        [  0, -Z,  X ], // 6
+        [  0, -Z, -X ], // 7
+        [  Z,  X,  0 ], // 8
+        [ -Z,  X,  0 ], // 9
+        [  Z, -X,  0 ], // 10
+        [ -Z, -X,  0 ]  // 11
     ];
     // each triangle is 3 clockwise vertex indices,
     // plus 3 triangle neighbour indices, clockwise starting from the edge clockwise of the first vertex
-    Board.triangles = [
-        { vi: [ 2, 0, 4 ], ni: [ 3, 4, 1 ] }, // 0
-        { vi: [ 2, 4, 1 ], ni: [ 0, 5, 2 ] }, // 1
-        { vi: [ 2, 1, 5 ], ni: [ 1, 6, 3 ] }, // 2
-        { vi: [ 2, 5, 0 ], ni: [ 2, 7, 0 ] }, // 3
-        { vi: [ 3, 4, 0 ], ni: [ 5, 0, 7 ] }, // 4
-        { vi: [ 3, 1, 4 ], ni: [ 6, 1, 4 ] }, // 5
-        { vi: [ 3, 5, 1 ], ni: [ 7, 2, 5 ] }, // 6
-        { vi: [ 3, 0, 5 ], ni: [ 4, 3, 6 ] }, // 7
+    var tris = [
+        [  0,  1,  4 ],
+        [  0,  4,  9 ],
+        [  9,  4,  5 ],
+        [  4,  8,  5 ],
+        [  4,  1,  8 ],
+        [  8,  1, 10 ],
+        [  8, 10,  3 ],
+        [  5,  8,  3 ],
+        [  5,  3,  2 ],
+        [  2,  3,  7 ],
+        [  7,  3, 10 ],
+        [  7, 10,  6 ],
+        [  7,  6, 11 ],
+        [ 11,  6,  0 ],
+        [  0,  6,  1 ],
+        [  6, 10,  1 ],
+        [  9, 11,  0 ],
+        [  9,  2, 11 ],
+        [  9,  5,  2 ],
+        [  7, 11,  2 ]
     ];
+    function getEdge(v0, v1)
+    {
+        // look for triangle edge v0, v1 counterclockwise
+        for (var i = 0; i < tris.length; ++i)
+        {
+            var t = tris[i];
+            if ((t[0] == v1 && t[1] == v0) ||
+                (t[1] == v1 && t[2] == v0) ||
+                (t[2] == v1 && t[0] == v0))
+            {
+                return i;
+            }
+        }
+    }
+    Board.triangles = [];
+    for (var i = 0; i < tris.length; ++i)
+    {
+        Board.triangles.push({
+            vi: tris[i],
+            ni: [ getEdge(tris[i][0], tris[i][1]),
+                  getEdge(tris[i][1], tris[i][2]),
+                  getEdge(tris[i][2], tris[i][0]) ]
+        });
+    }
     function divide()
     {
         function unitAverage(u, v)
