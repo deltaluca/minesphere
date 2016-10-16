@@ -24,17 +24,18 @@ var Config = (function(){
     }
     return {
         divisions: query_string["divisions"] || 3,
-        mines: query_string["mines"] || 106
+        mines: query_string["mines"] || 106,
+        fov: query_string["fov"] || 120,
+        layback: query_string["layback"] || 1
     };
 })();
 
 var Board = (function(){
     var Board = {};
 
-    // vertices after division are not unique, but no-one cares.
     var X = 0.525731112119133606;
     var Z = 0.850650808352039932;
-    Board.vertices = [
+    var vertices = [
         [ -X,  0,  Z ], // 0
         [  X,  0,  Z ], // 1
         [ -X,  0, -Z ], // 2
@@ -48,7 +49,6 @@ var Board = (function(){
         [  Z, -X,  0 ], // 10
         [ -Z, -X,  0 ]  // 11
     ];
-    // each triangle is 3 clockwise vertex indices,
     var tris = [
         [  0,  1,  4 ],
         [  0,  4,  9 ],
@@ -92,7 +92,7 @@ var Board = (function(){
     for (var i = 0; i < tris.length; ++i)
     {
         Board.triangles.push({
-            vi: tris[i],
+            vi: [ vertices[tris[i][0]], vertices[tris[i][1]], vertices[tris[i][2]] ],
             ni: [ getEdge(tris[i][0], tris[i][1]),
                   getEdge(tris[i][1], tris[i][2]),
                   getEdge(tris[i][2], tris[i][0]) ]
@@ -111,39 +111,35 @@ var Board = (function(){
             ret[2] *= rl;
             return ret;
         }
-        var newVertices = [];
         var newTriangles = [];
         for (var i = 0; i < Board.triangles.length; ++i)
         {
             var triangle = Board.triangles[i];
-            var v0 = Board.vertices[triangle.vi[0]];
-            var v1 = Board.vertices[triangle.vi[1]];
-            var v2 = Board.vertices[triangle.vi[2]];
+            var v0 = triangle.vi[0];
+            var v1 = triangle.vi[1];
+            var v2 = triangle.vi[2];
             var v3 = unitAverage(v0, v2);
             var v4 = unitAverage(v0, v1);
             var v5 = unitAverage(v1, v2);
-            var vi = newVertices.length;
             var e0 = Board.triangles[triangle.ni[0]].ni.indexOf(i);
             var e1 = Board.triangles[triangle.ni[1]].ni.indexOf(i);
             var e2 = Board.triangles[triangle.ni[2]].ni.indexOf(i);
-            newVertices.push(
-                v0,  // + 0        v0
-                v1,  // + 1  e2   /  \   e0
-                v2,  // + 2     v3  - v4
-                v3,  // + 3     /  \ /  \
-                v4,  // + 4    v2 -v5 - v1
-                v5); // + 5        e1
+            //        v0
+            //  e2   /  \   e0
+            //     v3  - v4
+            //     /  \ /  \
+            //    v2 -v5 - v1
+            //        e1
             var ti = newTriangles.length; // i * 4
             var n0 = triangle.ni[0] * 4;
             var n1 = triangle.ni[1] * 4;
             var n2 = triangle.ni[2] * 4;
             newTriangles.push(
-                { vi: [ vi + 0, vi + 4, vi + 3 ], ni: [ n0 + ((e0 + 1) % 3), ti + 3, n2 + e2 ] },
-                { vi: [ vi + 4, vi + 1, vi + 5 ], ni: [ n0 + e0, n1 + ((e1 + 1) % 3), ti + 3 ] },
-                { vi: [ vi + 3, vi + 5, vi + 2 ], ni: [ ti + 3, n1 + e1, n2 + ((e2 + 1) % 3) ] },
-                { vi: [ vi + 3, vi + 4, vi + 5 ], ni: [ ti + 0, ti + 1, ti + 2 ] });
+                { vi: [ v0, v4, v3 ], ni: [ n0 + ((e0 + 1) % 3), ti + 3, n2 + e2 ] },
+                { vi: [ v4, v1, v5 ], ni: [ n0 + e0, n1 + ((e1 + 1) % 3), ti + 3 ] },
+                { vi: [ v3, v5, v2 ], ni: [ ti + 3, n1 + e1, n2 + ((e2 + 1) % 3) ] },
+                { vi: [ v3, v4, v5 ], ni: [ ti + 0, ti + 1, ti + 2 ] });
         }
-        Board.vertices  = newVertices;
         Board.triangles = newTriangles;
     }
     for (var i = 0; i < Config.divisions; ++i)
@@ -151,19 +147,25 @@ var Board = (function(){
         divide();
     }
 
-    Board.vertexBuffer = new Float32Array(Board.vertices.length * 3);
-    Board.indexBuffer = new Uint16Array(Board.triangles.length * 3);
-    for (var i = 0; i < Board.vertices.length; ++i)
-    {
-        Board.vertexBuffer[i * 3 + 0] = Board.vertices[i][0];
-        Board.vertexBuffer[i * 3 + 1] = Board.vertices[i][1];
-        Board.vertexBuffer[i * 3 + 2] = Board.vertices[i][2];
-    }
+    var v0 = Board.triangles[0].vi[0];
+    var v1 = Board.triangles[0].vi[1];
+    var v2 = Board.triangles[0].vi[2];
+    var x = (v0[0] + v1[0] + v2[0]) / 3;
+    var y = (v0[1] + v1[1] + v2[1]) / 3;
+    var z = (v0[2] + v1[2] + v2[2]) / 3;
+    Board.maxLayback = Math.sqrt(x * x + y * y + z * z);
+
+    Board.vertexBuffer = new Float32Array(Board.triangles.length * 12);
     for (var i = 0; i < Board.triangles.length; ++i)
     {
-        Board.indexBuffer[i * 3 + 0] = Board.triangles[i].vi[0];
-        Board.indexBuffer[i * 3 + 1] = Board.triangles[i].vi[1];
-        Board.indexBuffer[i * 3 + 2] = Board.triangles[i].vi[2];
+        for (var j = 0; j < 3; ++j)
+        {
+            for (var k = 0; k < 3; ++k)
+            {
+                Board.vertexBuffer[i * 12 + j * 4 + k] = Board.triangles[i].vi[j][k];
+            }
+            Board.vertexBuffer[i * 12 + j * 4 + 3] = i * 3 + j;
+        }
     }
 
     return Board;
@@ -275,7 +277,7 @@ function rot(screenPos)
     var b = 2 * dir[2] * State.layback;
     var c = State.layback * State.layback - 1;
     var det = Math.sqrt(b * b - 4 * a * c);
-    var t = (-b + (State.layback <= 1 ? 1 : -1) * det) / 2;
+    var t = (-b + det) / 2;
     dir[0] *= t;
     dir[1] *= t;
     dir[2] = (State.layback + dir[2] * t);
@@ -392,7 +394,7 @@ function mainloop()
     }
 
     State.laybackCount = Math.max(0, Math.min(10, State.laybackCount + Input.deltaY * 0.02));
-    State.layback = State.laybackCount * 1 / 10;
+    State.layback = State.laybackCount * Board.maxLayback * Config.layback / 10;
     Input.deltaY = 0;
 
     if (Input.dragging)
@@ -429,14 +431,17 @@ Render.init = function ()
         uniform mat4 rotation; \
         uniform float layback; \
         \
-        attribute vec3 position; \
+        attribute vec4 position; \
         varying vec3 outpos; \
+        varying vec3 uvw; \
         \
         void main() { \
-            vec4 pos = rotation * vec4(position, 1.0); \
+            vec4 pos = rotation * vec4(position.xyz, 1.0); \
             pos.z -= layback; \
             gl_Position = projection * pos; \
-            outpos = position; \
+            float k = fract(position.w * (1.0 / 3.0)) * 3.0; \
+            uvw = k < 0.5 ? vec3(1, 0, 0) : k < 1.5 ? vec3(0, 1, 0) : vec3(0, 0, 1); \
+            outpos = position.xyz; \
         } \
     ");
     gl.compileShader(vs);
@@ -447,6 +452,7 @@ Render.init = function ()
     gl.shaderSource(fs, "#extension GL_OES_standard_derivatives : enable\n\
         precision highp float; \
         varying vec3 outpos; \
+        varying vec3 uvw; \
         \
         uniform sampler2D envmap; \
         \
@@ -455,7 +461,12 @@ Render.init = function ()
             vec3 dpdy = dFdy(outpos); \
             vec3 normal = normalize(cross(dpdx, dpdy)); \
             vec3 lighting = texture2D(envmap, vec2(atan(normal.z, normal.x) * 0.15915494309 + 0.5, asin(normal.y) * 0.31830988618 + 0.5)).xyz; \
-            gl_FragColor = vec4(lighting, 1.0); \
+            float dl = fwidth(uvw.x);/*doesn't matter which we use*/ \
+            float dist = min(uvw.x, min(uvw.y, uvw.z)); \
+            float edgeStrength = smoothstep(dl, 0.0, dist) * 0.15; \
+            vec3 color = lighting; \
+            color = mix(color, vec3(0, 0, 0), edgeStrength); \
+            gl_FragColor = vec4(color, 1.0); \
         } \
     ");
     gl.compileShader(fs);
@@ -481,16 +492,13 @@ Render.init = function ()
     Render.program = program;
     Render.envmap = envmap;
     Render.vb = gl.createBuffer();
-    Render.ib = gl.createBuffer();
 
     gl.useProgram(program);
     gl.bindBuffer(gl.ARRAY_BUFFER, Render.vb);
     gl.bufferData(gl.ARRAY_BUFFER, Board.vertexBuffer, gl.STATIC_DRAW);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, Render.ib);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, Board.indexBuffer, gl.STATIC_DRAW);
     var posAttr = gl.getAttribLocation(program, "position");
     gl.enableVertexAttribArray(posAttr);
-    gl.vertexAttribPointer(posAttr, 3, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribPointer(posAttr, 4, gl.FLOAT, false, 0, 0);
 
     var envsampler = gl.getUniformLocation(program, "envmap");
     gl.activeTexture(gl.TEXTURE0);
@@ -511,12 +519,12 @@ function renderMain()
     gl.clearColor(1, 1, 1, 1);
     gl.disable(gl.DEPTH_TEST);
     gl.enable(gl.CULL_FACE);
-    gl.cullFace(State.layback <= 1 ? gl.FRONT : gl.BACK);
+    gl.cullFace(gl.FRONT);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     var near = 0.001;
     var far = 10.0;
-    var fov = 120 * Math.PI / 180;
+    var fov = Config.fov * Math.PI / 180;
     var aspect = canvas.width / canvas.height;
     var f = Math.tan(Math.PI * 0.5 - 0.5 * fov);
     var ri = 1 / (near - far);
@@ -529,7 +537,7 @@ function renderMain()
     gl.uniformMatrix4fv(Render.rotation, false, new Float32Array(State.rotation));
     gl.uniform1f(Render.layback, State.layback);
 
-    gl.drawElements(gl.TRIANGLES, Board.indexBuffer.length, gl.UNSIGNED_SHORT, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, Board.vertexBuffer.length / 4);
 }
 
 function renderHUD()
