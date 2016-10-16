@@ -516,7 +516,7 @@ function renderMain()
 
     var near = 0.001;
     var far = 10.0;
-    var fov = 160 * Math.PI / 180;
+    var fov = 120 * Math.PI / 180;
     var aspect = canvas.width / canvas.height;
     var f = Math.tan(Math.PI * 0.5 - 0.5 * fov);
     var ri = 1 / (near - far);
