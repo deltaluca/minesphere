@@ -181,7 +181,8 @@ var State = {
     startTime: 0,
     timer: 0,
     proj:     [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
-    rotation: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+    rotation: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    laybackCount: 10
 };
 
 var MouseButtons = {
@@ -193,6 +194,7 @@ var Input = (function(){
     var Input = {
         mouseDown: {},
         dragging: false,
+        deltaY: 0,
         dragStart: [0, 0],
         mousePos: [0, 0]
     };
@@ -205,6 +207,10 @@ var Input = (function(){
     {
         e.preventDefault();
     }, false);
+    //document.addEventListener('wheel', function (e)
+    //{
+    //    Input.deltaY += e.deltaY;
+    //}, false);
     document.addEventListener('mousedown', function (e)
     {
         Input.mousePos = [e.clientX, e.clientY];
@@ -231,8 +237,8 @@ var Input = (function(){
             if (dx * dx + dy * dy > 5 * 5)
             {
                 Input.dragStart = [e.clientX, e.clientY];
+                Input.dragRot = rot(Input.dragStart);
                 Input.dragging = true;
-                State.copyRotation = State.rotation.concat();
             }
         }
     }, false);
@@ -252,12 +258,27 @@ var Input = (function(){
     return Input;
 })();
 
-function rot(screenPos)
+function screenDir(screenPos)
 {
     var canvas = document.getElementById("canvas");
     var ndc = [  screenPos[0] / canvas.width  * 2 - 1,
                -(screenPos[1] / canvas.height * 2 - 1) ];
-    var dir = unit([ ndc[0] / State.proj[0], ndc[1] / State.proj[5], -1]);
+    return unit([ ndc[0] / State.proj[0], ndc[1] / State.proj[5], -1]);
+}
+
+function rot(screenPos)
+{
+    var dir = screenDir(screenPos);
+    // u + tv ^ 2 = 1
+    // t^2 + 2tu.v + u^2 = 1
+    var a = 1;
+    var b = 2 * dir[2] * State.layback;
+    var c = State.layback * State.layback - 1;
+    var det = Math.sqrt(b * b - 4 * a * c);
+    var t = (-b + (State.layback <= 1 ? 1 : -1) * det) / 2;
+    dir[0] *= t;
+    dir[1] *= t;
+    dir[2] = (State.layback + dir[2] * t);
     var side = unit([-dir[2], 0, dir[0]]);
     var up = cross(dir, side);
     return [side[0], side[1], side[2], 0,
@@ -334,13 +355,23 @@ function cross(a, b)
 }
 function norm(a)
 {
-    var x = unit([a[0],a[1], a[2], a[3]]);
-    var y = [a[4],a[5], a[6], a[7]];
-    var z = unit(cross(x,y));
+    var z = unit([a[8],a[9],a[10]]);
+    var y = [a[4],a[5], a[6]];
+    var x = unit(cross(y,z));
     y = unit(cross(z,x));
     return [x[0],x[1],x[2],0,
             y[0],y[1],y[2],0,
             z[0],z[1],z[2],0,
+            0, 0, 0, 1];
+}
+function axisRotate(axis, cos, sin)
+{
+    var u = axis[0];
+    var v = axis[1];
+    var w = axis[2];
+    return [u*u + (1-u*u)*cos, u*v*(1-cos)-w*sin, u*w*(1-cos)+v*sin, 0,
+            u*v*(1-cos)+w*sin, v*v+(1-v*v)*cos, v*w*(1-cos)-u*sin, 0,
+            u*w*(1-cos)-v*sin, v*w*(1-cos)+u*sin, w*w+(1-w*w)*cos, 0,
             0, 0, 0, 1];
 }
 
@@ -360,10 +391,23 @@ function mainloop()
         State.timer = Math.floor((Date.now() - State.startTime) / 1000);
     }
 
+    State.laybackCount = Math.max(0, Math.min(10, State.laybackCount + Input.deltaY * 0.02));
+    State.layback = State.laybackCount * 1 / 10;
+    Input.deltaY = 0;
+
     if (Input.dragging)
     {
-        var offset = mul(inv(rot(Input.dragStart)), rot(Input.mousePos));
-        State.rotation = mul(State.copyRotation, offset); // from start of drag
+        var newRot = rot(Input.mousePos);
+
+        // spin newRot about it's z-axis to induce the smallest rotation possible based on last rotation matrix
+        var dotX = (Input.dragRot[0]*newRot[0]+Input.dragRot[1]*newRot[1]+Input.dragRot[2]*newRot[2]);
+        var dotY = (Input.dragRot[4]*newRot[0]+Input.dragRot[5]*newRot[1]+Input.dragRot[6]*newRot[2]);
+        newRot = mul(newRot, axisRotate([newRot[8], newRot[9], newRot[10]], dotX, dotY));
+
+        var offset = mul(inv(Input.dragRot), newRot);
+        Input.dragRot = newRot;
+        Input.dragStart = Input.mousePos.concat();
+        State.rotation = mul(State.rotation, offset);
         State.rotation = norm(State.rotation);
     }
 
@@ -383,12 +427,15 @@ Render.init = function ()
     gl.shaderSource(vs, "\
         uniform mat4 projection; \
         uniform mat4 rotation; \
+        uniform float layback; \
         \
         attribute vec3 position; \
         varying vec3 outpos; \
         \
         void main() { \
-            gl_Position = projection * rotation * vec4(position, 1.0); \
+            vec4 pos = rotation * vec4(position, 1.0); \
+            pos.z -= layback; \
+            gl_Position = projection * pos; \
             outpos = position; \
         } \
     ");
@@ -452,6 +499,7 @@ Render.init = function ()
 
     Render.projection = gl.getUniformLocation(program, "projection");
     Render.rotation = gl.getUniformLocation(program, "rotation");
+    Render.layback = gl.getUniformLocation(program, "layback");
 };
 
 function renderMain()
@@ -462,12 +510,13 @@ function renderMain()
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.clearColor(1, 1, 1, 1);
     gl.disable(gl.DEPTH_TEST);
-    gl.disable(gl.CULL_FACE);
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(State.layback <= 1 ? gl.FRONT : gl.BACK);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     var near = 0.001;
-    var far = 2.0;
-    var fov = 60 * Math.PI / 180;
+    var far = 10.0;
+    var fov = 160 * Math.PI / 180;
     var aspect = canvas.width / canvas.height;
     var f = Math.tan(Math.PI * 0.5 - 0.5 * fov);
     var ri = 1 / (near - far);
@@ -478,6 +527,7 @@ function renderMain()
         0, 0, 2 * near * far * ri, 0];
     gl.uniformMatrix4fv(Render.projection, false, new Float32Array(State.proj));
     gl.uniformMatrix4fv(Render.rotation, false, new Float32Array(State.rotation));
+    gl.uniform1f(Render.layback, State.layback);
 
     gl.drawElements(gl.TRIANGLES, Board.indexBuffer.length, gl.UNSIGNED_SHORT, 0);
 }
