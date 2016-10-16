@@ -49,7 +49,6 @@ var Board = (function(){
         [ -Z, -X,  0 ]  // 11
     ];
     // each triangle is 3 clockwise vertex indices,
-    // plus 3 triangle neighbour indices, clockwise starting from the edge clockwise of the first vertex
     var tris = [
         [  0,  1,  4 ],
         [  0,  4,  9 ],
@@ -86,6 +85,9 @@ var Board = (function(){
             }
         }
     }
+    // plus 3 triangle neighbour indices, clockwise starting from the edge clockwise of the first vertex
+    // this allows us to keep track of triangle adjacencies throughout the subdivision process
+    // as well as having an easy way to iterate around vertices
     Board.triangles = [];
     for (var i = 0; i < tris.length; ++i)
     {
@@ -167,22 +169,6 @@ var Board = (function(){
     return Board;
 })();
 
-var MouseButtons = {
-    LEFT   : 0,
-    MIDDLE : 1,
-    RIGHT  : 2
-};
-var Input = (function(){
-    var Input = {
-        mouseDown: []
-    };
-    for (var button in MouseButtons)
-    {
-        Input.mouseDown[MouseButtons[button]] = false;
-    }
-    return Input;
-})();
-
 var PlayState = {
     START  : 0,
     PlAYING: 1,
@@ -193,8 +179,170 @@ var State = {
     state: PlayState.START,
     minesRemaining: 0,
     startTime: 0,
-    timer: 0
+    timer: 0,
+    proj:     [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    rotation: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 };
+
+var MouseButtons = {
+    LEFT   : 0,
+    MIDDLE : 1,
+    RIGHT  : 2
+};
+var Input = (function(){
+    var Input = {
+        mouseDown: {},
+        dragging: false,
+        dragStart: [0, 0],
+        mousePos: [0, 0]
+    };
+    for (var button in MouseButtons)
+    {
+        Input.mouseDown[MouseButtons[button]] = false;
+    }
+
+    document.addEventListener('contextmenu', function(e)
+    {
+        e.preventDefault();
+    }, false);
+    document.addEventListener('mousedown', function (e)
+    {
+        Input.mousePos = [e.clientX, e.clientY];
+        Input.mouseDown[e.button] = true;
+        if (!Input.dragging)
+        {
+            Input.dragStart = [e.clientX, e.clientY];
+        }
+    }, false);
+    document.addEventListener('mouseover', function (e)
+    {
+        Input.mousePos = [e.clientX, e.clientY];
+    }, false);
+    document.addEventListener('mousemove', function (e)
+    {
+        Input.mousePos = [e.clientX, e.clientY];
+        var down = Input.mouseDown[MouseButtons.LEFT] ||
+                   Input.mouseDown[MouseButtons.MIDDLE] ||
+                   Input.mouseDown[MouseButtons.RIGHT];
+        if (!Input.dragging && down)
+        {
+            var dx = e.clientX - Input.dragStart[0];
+            var dy = e.clientY - Input.dragStart[1];
+            if (dx * dx + dy * dy > 5 * 5)
+            {
+                Input.dragStart = [e.clientX, e.clientY];
+                Input.dragging = true;
+                State.copyRotation = State.rotation.concat();
+            }
+        }
+    }, false);
+    document.addEventListener('mouseup', function (e)
+    {
+        Input.mousePos = [e.clientX, e.clientY];
+        Input.mouseDown[e.button] = false;
+        var down = Input.mouseDown[MouseButtons.LEFT] ||
+                   Input.mouseDown[MouseButtons.MIDDLE] ||
+                   Input.mouseDown[MouseButtons.RIGHT];
+        if (Input.dragging && !down)
+        {
+            Input.dragging = false;
+        }
+    }, false);
+
+    return Input;
+})();
+
+function rot(screenPos)
+{
+    var canvas = document.getElementById("canvas");
+    var ndc = [  screenPos[0] / canvas.width  * 2 - 1,
+               -(screenPos[1] / canvas.height * 2 - 1) ];
+    var dir = unit([ ndc[0] / State.proj[0], ndc[1] / State.proj[5], -1]);
+    var side = unit([-dir[2], 0, dir[0]]);
+    var up = cross(dir, side);
+    return [side[0], side[1], side[2], 0,
+            up[0], up[1], up[2], 0,
+            dir[0], dir[1], dir[2], 0,
+            0, 0, 0, 1];
+}
+function inv(m)
+{
+    var A0 = ((m[0] * m[5]) - (m[1] * m[4]));
+    var A1 = ((m[0] * m[6]) - (m[2] * m[4]));
+    var A2 = ((m[0] * m[7]) - (m[3] * m[4]));
+    var A3 = ((m[1] * m[6]) - (m[2] * m[5]));
+    var A4 = ((m[1] * m[7]) - (m[3] * m[5]));
+    var A5 = ((m[2] * m[7]) - (m[3] * m[6]));
+    var B0 = ((m[8] * m[13]) - (m[9] * m[12]));
+    var B1 = ((m[8] * m[14]) - (m[10] * m[12]));
+    var B2 = ((m[8] * m[15]) - (m[11] * m[12]));
+    var B3 = ((m[9] * m[14]) - (m[10] * m[13]));
+    var B4 = ((m[9] * m[15]) - (m[11] * m[13]));
+    var B5 = ((m[10] * m[15]) - (m[11] * m[14]));
+
+    var det = ((A0 * B5) - (A1 * B4) + (A2 * B3) + (A3 * B2) - (A4 * B1) + (A5 * B0));
+    var detrecp = 1.0 / det;
+    return [
+            (+( m[5] * B5) - ( m[6] * B4) + ( m[7] * B3)) * detrecp,
+            (-( m[1] * B5) + ( m[2] * B4) - ( m[3] * B3)) * detrecp,
+            (+(m[13] * A5) - (m[14] * A4) + (m[15] * A3)) * detrecp,
+            (-( m[9] * A5) + (m[10] * A4) - (m[11] * A3)) * detrecp,
+            (-( m[4] * B5) + ( m[6] * B2) - ( m[7] * B1)) * detrecp,
+            (+( m[0] * B5) - ( m[2] * B2) + ( m[3] * B1)) * detrecp,
+            (-(m[12] * A5) + (m[14] * A2) - (m[15] * A1)) * detrecp,
+            (+( m[8] * A5) - (m[10] * A2) + (m[11] * A1)) * detrecp,
+            (+( m[4] * B4) - ( m[5] * B2) + ( m[7] * B0)) * detrecp,
+            (-( m[0] * B4) + ( m[1] * B2) - ( m[3] * B0)) * detrecp,
+            (+(m[12] * A4) - (m[13] * A2) + (m[15] * A0)) * detrecp,
+            (-( m[8] * A4) + ( m[9] * A2) - (m[11] * A0)) * detrecp,
+            (-( m[4] * B3) + ( m[5] * B1) - ( m[6] * B0)) * detrecp,
+            (+( m[0] * B3) - ( m[1] * B1) + ( m[2] * B0)) * detrecp,
+            (-(m[12] * A3) + (m[13] * A1) - (m[14] * A0)) * detrecp,
+            (+( m[8] * A3) - ( m[9] * A1) + (m[10] * A0)) * detrecp
+    ];
+}
+function mul(a, b)
+{
+    return [ a[0] * b[0] +  a[1] * b[4] +  a[2] *  b[8] +  a[3] * b[12],
+             a[0] * b[1] +  a[1] * b[5] +  a[2] *  b[9] +  a[3] * b[13],
+             a[0] * b[2] +  a[1] * b[6] +  a[2] * b[10] +  a[3] * b[14],
+          /* a[0] * b[3] +  a[1] * b[7] +  a[2] * b[11] +  a[3] * b[15]*/ 0,
+             a[4] * b[0] +  a[5] * b[4] +  a[6] *  b[8] +  a[7] * b[12],
+             a[4] * b[1] +  a[5] * b[5] +  a[6] *  b[9] +  a[7] * b[13],
+             a[4] * b[2] +  a[5] * b[6] +  a[6] * b[10] +  a[7] * b[14],
+          /* a[4] * b[3] +  a[5] * b[7] +  a[6] * b[11] +  a[7] * b[15]*/ 0,
+             a[8] * b[0] +  a[9] * b[4] + a[10] *  b[8] + a[11] * b[12],
+             a[8] * b[1] +  a[9] * b[5] + a[10] *  b[9] + a[11] * b[13],
+             a[8] * b[2] +  a[9] * b[6] + a[10] * b[10] + a[11] * b[14],
+          /* a[8] * b[3] +  a[9] * b[7] + a[10] * b[11] + a[11] * b[15]*/ 0,
+          /*a[12] * b[0] + a[13] * b[4] + a[14] *  b[8] + a[15] * b[12]*/ 0,
+          /*a[12] * b[1] + a[13] * b[5] + a[14] *  b[9] + a[15] * b[13]*/ 0,
+          /*a[12] * b[2] + a[13] * b[6] + a[14] * b[10] + a[15] * b[14]*/ 0,
+          /*a[12] * b[3] + a[13] * b[7] + a[14] * b[11] + a[15] * b[15]*/ 1 ];
+}
+function unit(x)
+{
+    var nl = 1/Math.sqrt(x[0]*x[0]+x[1]*x[1]+x[2]*x[2]);
+    return [x[0]*nl, x[1]*nl, x[2]*nl, 0];
+}
+function cross(a, b)
+{
+    return [a[1]*b[2]-a[2]*b[1],
+            a[2]*b[0]-a[0]*b[2],
+            a[0]*b[1]-a[1]*b[0],
+            0];
+}
+function norm(a)
+{
+    var x = unit([a[0],a[1], a[2], a[3]]);
+    var y = [a[4],a[5], a[6], a[7]];
+    var z = unit(cross(x,y));
+    y = unit(cross(z,x));
+    return [x[0],x[1],x[2],0,
+            y[0],y[1],y[2],0,
+            z[0],z[1],z[2],0,
+            0, 0, 0, 1];
+}
 
 function mainloop()
 {
@@ -210,6 +358,13 @@ function mainloop()
     else if (State.state == PlayState.PLAYING)
     {
         State.timer = Math.floor((Date.now() - State.startTime) / 1000);
+    }
+
+    if (Input.dragging)
+    {
+        var offset = mul(inv(rot(Input.dragStart)), rot(Input.mousePos));
+        State.rotation = mul(State.copyRotation, offset); // from start of drag
+        State.rotation = norm(State.rotation);
     }
 
     renderMain();
@@ -316,22 +471,13 @@ function renderMain()
     var aspect = canvas.width / canvas.height;
     var f = Math.tan(Math.PI * 0.5 - 0.5 * fov);
     var ri = 1 / (near - far);
-    var proj = new Float32Array([
+    State.proj = [
         f / aspect, 0, 0, 0,
         0, f, 0, 0,
         0, 0, (far + near) * ri, -1,
-        0, 0, 2 * near * far * ri, 0]);
-    gl.uniformMatrix4fv(Render.projection, false, proj);
-
-    var a = Date.now() / 4000;
-    var c = Math.cos(a);
-    var s = Math.sin(a);
-    var rotation = new Float32Array([
-        c, 0, s, 0,
-        0, 1, 0, 0,
-       -s, 0, c, 0,
-        0, 0, 0, 1]);
-    gl.uniformMatrix4fv(Render.rotation, false, rotation);
+        0, 0, 2 * near * far * ri, 0];
+    gl.uniformMatrix4fv(Render.projection, false, new Float32Array(State.proj));
+    gl.uniformMatrix4fv(Render.rotation, false, new Float32Array(State.rotation));
 
     gl.drawElements(gl.TRIANGLES, Board.indexBuffer.length, gl.UNSIGNED_SHORT, 0);
 }
@@ -395,19 +541,6 @@ function resizeCanvas(canvas)
 
 function startup()
 {
-    document.addEventListener('contextmenu', function(e)
-    {
-        e.preventDefault();
-    }, false);
-    document.addEventListener('mousedown', function (e)
-    {
-        Input.mouseDown[e.button] = true;
-    }, false);
-    document.addEventListener('mouseup', function (e)
-    {
-        Input.mouseDown[e.button] = false;
-    }, false);
-
     Render.init();
     mainloop();
 }
