@@ -230,7 +230,7 @@ Render.init = function ()
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     };
-    envmap.image.src = "envmap.png";
+    envmap.image.src = "envmap.jpg";
 
     Render.program = program;
     Render.envmap = envmap;
