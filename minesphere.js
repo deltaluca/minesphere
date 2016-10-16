@@ -190,7 +190,7 @@ Render.init = function ()
         \
         void main() { \
             gl_Position = projection * rotation * vec4(position, 1.0); \
-            outpos = (rotation * vec4(position, 1.0)).xyz; \
+            outpos = position; \
         } \
     ");
     gl.compileShader(vs);
@@ -208,8 +208,8 @@ Render.init = function ()
             vec3 dpdx = dFdx(outpos); \
             vec3 dpdy = dFdy(outpos); \
             vec3 normal = normalize(cross(dpdx, dpdy)); \
-            gl_FragColor = vec4(normal * 0.5 + 0.5, 1); \
-            gl_FragColor = vec4(texture2D(envmap, vec2(normal.x, normal.z))); \
+            vec3 lighting = texture2D(envmap, vec2(atan(normal.z, normal.x) * 0.15915494309 + 0.5, asin(normal.y) * 0.31830988618 + 0.5)).xyz; \
+            gl_FragColor = vec4(lighting, 1.0); \
         } \
     ");
     gl.compileShader(fs);
@@ -226,9 +226,9 @@ Render.init = function ()
     envmap.image.onload = function ()
     {
         gl.bindTexture(gl.TEXTURE_2D, envmap);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, envmap.image);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     };
     envmap.image.src = "envmap.jpg";
 
@@ -279,10 +279,13 @@ function renderMain()
         0, 0, 2 * near * far * ri, 0]);
     gl.uniformMatrix4fv(Render.projection, false, proj);
 
+    var a = Date.now() / 4000;
+    var c = Math.cos(a);
+    var s = Math.sin(a);
     var rotation = new Float32Array([
-        1, 0, 0, 0,
+        c, 0, s, 0,
         0, 1, 0, 0,
-        0, 0, 1, 0,
+       -s, 0, c, 0,
         0, 0, 0, 1]);
     gl.uniformMatrix4fv(Render.rotation, false, rotation);
 
