@@ -482,6 +482,7 @@ Render.init = function ()
         varying vec3 outpos; \
         varying vec3 uvw; \
         varying vec2 outuv; \
+        varying float border; \
         \
         void main() \
         { \
@@ -493,6 +494,7 @@ Render.init = function ()
             vec3 tril = bary / meta.xyz; \
             float s = 0.5*(meta.x+meta.y+meta.z); \
             float area = sqrt(s*(s-meta.x)*(s-meta.y)*(s-meta.z)); \
+            border = 0.1*sqrt(area); \
             vec3 dist = tril * 2.0 * area / dot(tril, meta.xyz); \
             uvw = dist; \
             outuv = inuv; \
@@ -509,34 +511,54 @@ Render.init = function ()
         varying vec3 outpos; \
         varying vec3 uvw; \
         varying vec2 outuv; \
+        varying float border; \
         \
         uniform sampler2D envmap; \
+        uniform sampler2D tiles; \
         \
-        vec3 getLighting(vec3 normal) \
-        { \
-            return texture2D(envmap, vec2(atan(normal.z, normal.x) * 0.15915494309 + 0.5, asin(normal.y) * 0.31830988618 + 0.5)).xyz; \
-        } \
         void main() \
         { \
             vec3 dpdx = dFdx(outpos); \
             vec3 dpdy = dFdy(outpos); \
-            vec3 faceNormal = normalize(-cross(dpdx, dpdy)); \
-            vec3 faceLighting = getLighting(faceNormal); \
-            float dist = min(uvw.x, min(uvw.y, uvw.z)); \
+            vec2 px = normalize(vec2(dFdx(uvw.x),dFdy(uvw.x))); \
+            vec2 py = normalize(vec2(dFdx(uvw.y),dFdy(uvw.y))); \
+            vec2 pz = normalize(vec2(dFdx(uvw.z),dFdy(uvw.z))); \
             float eps = fwidth(uvw.x); \
+            \
+            vec3 normal = normalize(-cross(dpdx, dpdy)); \
+            vec3 tangent = normalize(vec3(-normal.z,0,normal.x)); \
+            vec3 bitangent = cross(normal, tangent); \
+            \
+            float dist = min(uvw.x, min(uvw.y, uvw.z)); \
             float edgeStrength = smoothstep(eps, 0.0, dist) * 0.15; \
-            vec3 color = faceLighting; \
-            color = mix(color, vec3(0.0, 0.0, 0.0), edgeStrength); \
-            vec2 rot = normalize(vec2(dFdx(outuv.x),dFdy(outuv.x))); \
-            float circleDist = length(outuv); \
-            eps = fwidth(circleDist); \
-            float circleStrength = smoothstep(1.0,1.0-eps,circleDist); \
-            vec2 uv = vec2(dot(rot,outuv),dot(vec2(-rot.y,rot.x),outuv)); \
-            if (dot(uv,uv)<=1.0) \
+            \
+            vec3  lighting = texture2D(envmap, vec2(atan( normal.z,  normal.x) * 0.15915494309 + 0.5, asin( normal.y) * 0.31830988618 + 0.5)).xyz; \
+            \
+            float tindex = 0.0; \
+            if (tindex == 0.0) \
             { \
-                uv = uv*0.5+0.5; \
-                color = mix(color,texture2D(envmap, uv).xyz,circleStrength); \
+                vec3 bNormal = normal; \
+                if      (uvw.x == dist) { bNormal += (tangent * px.x + bitangent * px.y) * 0.5; } \
+                else if (uvw.y == dist) { bNormal += (tangent * py.x + bitangent * py.y) * 0.5; } \
+                else                    { bNormal += (tangent * pz.x + bitangent * pz.y) * 0.5; } \
+                bNormal = normalize(bNormal); \
+                vec3 bLighting = texture2D(envmap, vec2(atan(bNormal.z, bNormal.x) * 0.15915494309 + 0.5, asin(bNormal.y) * 0.31830988618 + 0.5)).xyz; \
+                lighting = mix(lighting, bLighting, smoothstep(border, border - eps, dist)); \
+                lighting += vec3(0.1,0.1,0.1); \
+                edgeStrength = 0.0; \
             } \
+            \
+            vec3 color = lighting; \
+            color = mix(color, vec3(0.0, 0.0, 0.0), edgeStrength); \
+            \
+            vec2 rot = normalize(vec2(dFdx(outuv.x),dFdy(outuv.x))); \
+            vec2 uv = vec2(dot(rot,outuv),dot(vec2(-rot.y,rot.x),outuv)); \
+            uv = clamp(uv*0.5+0.5,vec2(0,0),vec2(1,1)); \
+            \
+            vec2 uvOffset = vec2(fract(tindex*0.25), floor(tindex*0.25)*0.25); \
+            vec4 tex = texture2D(tiles, uv*0.25 + uvOffset); \
+            color = mix(color,tex.rgb,tex.a); \
+            \
             gl_FragColor = vec4(color, 1.0); \
         } \
     ");
@@ -553,6 +575,7 @@ Render.init = function ()
     envmap.image = new Image();
     envmap.image.onload = function ()
     {
+        gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, envmap);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -560,8 +583,22 @@ Render.init = function ()
     };
     envmap.image.src = "envmap.jpg";
 
+    var tiles = gl.createTexture();
+    tiles.image = new Image();
+    tiles.image.onload = function ()
+    {
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, tiles);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tiles.image);
+        gl.generateMipmap(gl.TEXTURE_2D);
+    };
+    tiles.image.src = "tiles.png";
+
     Render.program = program;
     Render.envmap = envmap;
+    Render.tiles = tiles;
     Render.vb = gl.createBuffer();
 
     gl.useProgram(program);
@@ -581,6 +618,11 @@ Render.init = function ()
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, envmap);
     gl.uniform1i(envsampler, 0);
+
+    var tilesampler = gl.getUniformLocation(program, "tiles");
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, tiles);
+    gl.uniform1i(tilesampler, 1);
 
     Render.projection = gl.getUniformLocation(program, "projection");
     Render.rotation = gl.getUniformLocation(program, "rotation");
