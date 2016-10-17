@@ -479,7 +479,7 @@ Render.init = function ()
         attribute vec3 meta; \
         attribute vec2 inuv; \
         \
-        varying vec3 outpos; \
+        varying vec4 outpos; \
         varying vec3 uvw; \
         varying vec2 outuv; \
         varying float border; \
@@ -498,7 +498,7 @@ Render.init = function ()
             vec3 dist = tril * 2.0 * area / dot(tril, meta.xyz); \
             uvw = dist; \
             outuv = inuv; \
-            outpos = position.xyz; \
+            outpos = position; \
         } \
     ");
     gl.compileShader(vs);
@@ -508,7 +508,7 @@ Render.init = function ()
     var fs = gl.createShader(gl.FRAGMENT_SHADER);
     gl.shaderSource(fs, "#extension GL_OES_standard_derivatives : enable\n\
         precision highp float; \
-        varying vec3 outpos; \
+        varying vec4 outpos; \
         varying vec3 uvw; \
         varying vec2 outuv; \
         varying float border; \
@@ -518,8 +518,8 @@ Render.init = function ()
         \
         void main() \
         { \
-            vec3 dpdx = dFdx(outpos); \
-            vec3 dpdy = dFdy(outpos); \
+            vec3 dpdx = dFdx(outpos.xyz); \
+            vec3 dpdy = dFdy(outpos.xyz); \
             vec2 px = normalize(vec2(dFdx(uvw.x),dFdy(uvw.x))); \
             vec2 py = normalize(vec2(dFdx(uvw.y),dFdy(uvw.y))); \
             vec2 pz = normalize(vec2(dFdx(uvw.z),dFdy(uvw.z))); \
@@ -530,22 +530,22 @@ Render.init = function ()
             vec3 bitangent = cross(normal, tangent); \
             \
             float dist = min(uvw.x, min(uvw.y, uvw.z)); \
-            float edgeStrength = smoothstep(eps, 0.0, dist) * 0.15; \
+            float edgeStrength = smoothstep(eps, 0.0, dist) * 0.05; \
             \
             vec3  lighting = texture2D(envmap, vec2(atan( normal.z,  normal.x) * 0.15915494309 + 0.5, asin( normal.y) * 0.31830988618 + 0.5)).xyz; \
             \
-            float tindex = 0.0; \
+            float tindex = mod(floor(outpos.w / 24.0), 17.0); \
             if (tindex == 0.0) \
             { \
                 vec3 bNormal = normal; \
-                if      (uvw.x == dist) { bNormal += (tangent * px.x + bitangent * px.y) * 0.5; } \
-                else if (uvw.y == dist) { bNormal += (tangent * py.x + bitangent * py.y) * 0.5; } \
-                else                    { bNormal += (tangent * pz.x + bitangent * pz.y) * 0.5; } \
+                if      (uvw.x == dist) { bNormal += (tangent * px.x + bitangent * px.y) * 0.65; } \
+                else if (uvw.y == dist) { bNormal += (tangent * py.x + bitangent * py.y) * 0.65; } \
+                else                    { bNormal += (tangent * pz.x + bitangent * pz.y) * 0.65; } \
                 bNormal = normalize(bNormal); \
                 vec3 bLighting = texture2D(envmap, vec2(atan(bNormal.z, bNormal.x) * 0.15915494309 + 0.5, asin(bNormal.y) * 0.31830988618 + 0.5)).xyz; \
                 lighting = mix(lighting, bLighting, smoothstep(border, border - eps, dist)); \
-                lighting += vec3(0.1,0.1,0.1); \
                 edgeStrength = 0.0; \
+                lighting += vec3(0.1, 0.1, 0.1); \
             } \
             \
             vec3 color = lighting; \
@@ -555,6 +555,7 @@ Render.init = function ()
             vec2 uv = vec2(dot(rot,outuv),dot(vec2(-rot.y,rot.x),outuv)); \
             uv = clamp(uv*0.5+0.5,vec2(0,0),vec2(1,1)); \
             \
+            tindex = mod(tindex, 16.0); /* 17 'pressed' maps to 0 for tile appearance*/ \
             vec2 uvOffset = vec2(fract(tindex*0.25), floor(tindex*0.25)*0.25); \
             vec4 tex = texture2D(tiles, uv*0.25 + uvOffset); \
             color = mix(color,tex.rgb,tex.a); \
