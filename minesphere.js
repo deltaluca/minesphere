@@ -528,11 +528,14 @@ Render.init = function ()
             vec3 color = faceLighting; \
             color = mix(color, vec3(0.0, 0.0, 0.0), edgeStrength); \
             vec2 rot = normalize(vec2(dFdx(outuv.x),dFdy(outuv.x))); \
+            float circleDist = length(outuv); \
+            eps = fwidth(circleDist); \
+            float circleStrength = smoothstep(1.0,1.0-eps,circleDist); \
             vec2 uv = vec2(dot(rot,outuv),dot(vec2(-rot.y,rot.x),outuv)); \
             if (dot(uv,uv)<=1.0) \
             { \
                 uv = uv*0.5+0.5; \
-                color = texture2D(envmap, uv).xyz; \
+                color = mix(color,texture2D(envmap, uv).xyz,circleStrength); \
             } \
             gl_FragColor = vec4(color, 1.0); \
         } \
