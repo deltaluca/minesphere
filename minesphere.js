@@ -167,11 +167,25 @@ var Board = (function(){
         return [dot(c,t)/ir,dot(c,b)/ir];
     }
 
+    var bins = 20;
+    Board.lookup = [];
+    for (var i = 0; i < bins; ++i)
+    {
+        Board.lookup[i] = [];
+        for (var j = 0; j < bins; ++j)
+        {
+            Board.lookup[i][j] = [];
+        }
+    }
+
+    Board.state = new Float32Array(Math.ceil(Board.triangles.length / 4) * 4);
+
     Board.maxLayback = 1.0;
     Board.stride = 9;
     Board.vertexBuffer = new Float32Array(Board.triangles.length * 3 * Board.stride);
     for (var i = 0; i < Board.triangles.length; ++i)
     {
+        Board.state[i] = i % 17;
         var v0 = Board.triangles[i].vi[0];
         var v1 = Board.triangles[i].vi[1];
         var v2 = Board.triangles[i].vi[2];
@@ -464,35 +478,41 @@ Render.init = function ()
 
     var vs = gl.createShader(gl.VERTEX_SHADER);
     gl.shaderSource(vs, "\
-        uniform mat4 projection; \
-        uniform mat4 rotation; \
-        uniform float layback; \
-        \
-        attribute vec4 position; \
-        attribute vec3 meta; \
-        attribute vec2 inuv; \
-        \
-        varying vec4 outpos; \
-        varying vec3 uvw; \
-        varying vec2 outuv; \
-        varying float border; \
-        \
-        void main() \
-        { \
-            vec4 pos = rotation * vec4(position.xyz, 1.0); \
-            pos.z -= layback; \
-            gl_Position = projection * pos; \
-            float k = fract(position.w * (1.0 / 3.0)) * 3.0; \
-            vec3 bary = k < 0.5 ? vec3(1, 0, 0) : k < 1.5 ? vec3(0, 1, 0) : vec3(0, 0, 1); \
-            vec3 tril = bary / meta.xyz; \
-            float s = 0.5*(meta.x+meta.y+meta.z); \
-            float area = sqrt(s*(s-meta.x)*(s-meta.y)*(s-meta.z)); \
-            border = 0.1*sqrt(area); \
-            vec3 dist = tril * 2.0 * area / dot(tril, meta.xyz); \
-            uvw = dist; \
-            outuv = inuv; \
-            outpos = position; \
-        } \
+        precision highp float; \n\
+        uniform mat4 projection; \n\
+        uniform mat4 rotation; \n\
+        uniform float layback; \n\
+        uniform vec4 state[" + (Board.state.length / 4) + "];\n\
+        uniform vec4 mask[4]; \n\
+        \n\
+        attribute vec4 position; \n\
+        attribute vec3 meta; \n\
+        attribute vec2 inuv; \n\
+        \n\
+        varying vec3 outpos; \n\
+        varying vec3 uvw; \n\
+        varying vec2 outuv; \n\
+        varying float border; \n\
+        varying float tindex; \n\
+        \n\
+        void main() \n\
+        { \n\
+            vec4 pos = rotation * vec4(position.xyz, 1.0); \n\
+            pos.z -= layback; \n\
+            gl_Position = projection * pos; \n\
+            float k = fract(position.w * (1.0 / 3.0)) * 3.0; \n\
+            vec3 bary = k < 0.5 ? vec3(1, 0, 0) : k < 1.5 ? vec3(0, 1, 0) : vec3(0, 0, 1); \n\
+            vec3 tril = bary / meta.xyz; \n\
+            float s = 0.5*(meta.x+meta.y+meta.z); \n\
+            float area = sqrt(s*(s-meta.x)*(s-meta.y)*(s-meta.z)); \n\
+            border = 0.1*sqrt(area); \n\
+            vec3 dist = tril * 2.0 * area / dot(tril, meta.xyz); \n\
+            uvw = dist; \n\
+            outuv = inuv; \n\
+            outpos = position.xyz; \n\
+            float tri = floor(position.w / 3.0); \n\
+            tindex = dot(state[int(floor(tri * 0.25))], mask[int(fract(tri * 0.25) * 4.0)]); \n\
+        } \n\
     ");
     gl.compileShader(vs);
     if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) return alert(gl.getShaderInfoLog(vs));
@@ -500,61 +520,61 @@ Render.init = function ()
     gl.getExtension("OES_standard_derivatives");
     var fs = gl.createShader(gl.FRAGMENT_SHADER);
     gl.shaderSource(fs, "#extension GL_OES_standard_derivatives : enable\n\
-        precision highp float; \
-        varying vec4 outpos; \
-        varying vec3 uvw; \
-        varying vec2 outuv; \
-        varying float border; \
-        \
-        uniform sampler2D envmap; \
-        uniform sampler2D tiles; \
-        \
-        void main() \
-        { \
-            vec3 dpdx = dFdx(outpos.xyz); \
-            vec3 dpdy = dFdy(outpos.xyz); \
-            vec2 px = normalize(vec2(dFdx(uvw.x),dFdy(uvw.x))); \
-            vec2 py = normalize(vec2(dFdx(uvw.y),dFdy(uvw.y))); \
-            vec2 pz = normalize(vec2(dFdx(uvw.z),dFdy(uvw.z))); \
-            float eps = fwidth(uvw.x); \
-            \
-            vec3 normal = normalize(-cross(dpdx, dpdy)); \
-            vec3 tangent = normalize(vec3(-normal.z,0,normal.x)); \
-            vec3 bitangent = cross(normal, tangent); \
-            \
-            float dist = min(uvw.x, min(uvw.y, uvw.z)); \
-            float edgeStrength = smoothstep(eps, 0.0, dist) * 0.05; \
-            \
-            vec3  lighting = texture2D(envmap, vec2(atan( normal.z,  normal.x) * 0.15915494309 + 0.5, asin( normal.y) * 0.31830988618 + 0.5)).xyz; \
-            \
-            float tindex = 0.0; \
-            if (tindex == 0.0) \
-            { \
-                vec3 bNormal = normal; \
-                if      (uvw.x == dist) { bNormal += (tangent * px.x + bitangent * px.y) * 0.65; } \
-                else if (uvw.y == dist) { bNormal += (tangent * py.x + bitangent * py.y) * 0.65; } \
-                else                    { bNormal += (tangent * pz.x + bitangent * pz.y) * 0.65; } \
-                bNormal = normalize(bNormal); \
-                vec3 bLighting = texture2D(envmap, vec2(atan(bNormal.z, bNormal.x) * 0.15915494309 + 0.5, asin(bNormal.y) * 0.31830988618 + 0.5)).xyz; \
-                lighting = mix(lighting, bLighting, smoothstep(border, border - eps, dist)); \
-                edgeStrength = 0.0; \
-                lighting += vec3(0.1, 0.1, 0.1); \
-            } \
-            \
-            vec3 color = lighting; \
-            color = mix(color, vec3(0.0, 0.0, 0.0), edgeStrength); \
-            \
-            vec2 rot = normalize(vec2(dFdx(outuv.x),dFdy(outuv.x))); \
-            vec2 uv = vec2(dot(rot,outuv),dot(vec2(-rot.y,rot.x),outuv)); \
-            uv = clamp(uv*0.5+0.5,vec2(0,0),vec2(1,1)); \
-            \
-            tindex = mod(tindex, 16.0); /* 17 'pressed' maps to 0 for tile appearance*/ \
-            vec2 uvOffset = vec2(fract(tindex*0.25), floor(tindex*0.25)*0.25); \
-            vec4 tex = texture2D(tiles, uv*0.25 + uvOffset); \
-            color = mix(color,tex.rgb,tex.a); \
-            \
-            gl_FragColor = vec4(color, 1.0); \
-        } \
+        precision highp float; \n\
+        varying vec3 outpos; \n\
+        varying vec3 uvw; \n\
+        varying vec2 outuv; \n\
+        varying float border; \n\
+        varying float tindex; \n\
+        \n\
+        uniform sampler2D envmap; \n\
+        uniform sampler2D tiles; \n\
+        \n\
+        void main() \n\
+        { \n\
+            vec3 dpdx = dFdx(outpos.xyz); \n\
+            vec3 dpdy = dFdy(outpos.xyz); \n\
+            vec2 px = normalize(vec2(dFdx(uvw.x),dFdy(uvw.x))); \n\
+            vec2 py = normalize(vec2(dFdx(uvw.y),dFdy(uvw.y))); \n\
+            vec2 pz = normalize(vec2(dFdx(uvw.z),dFdy(uvw.z))); \n\
+            float eps = fwidth(uvw.x); \n\
+            \n\
+            vec3 normal = normalize(-cross(dpdx, dpdy)); \n\
+            vec3 tangent = normalize(vec3(-normal.z,0,normal.x)); \n\
+            vec3 bitangent = cross(normal, tangent); \n\
+            \n\
+            float dist = min(uvw.x, min(uvw.y, uvw.z)); \n\
+            float edgeStrength = smoothstep(eps, 0.0, dist) * 0.05; \n\
+            \n\
+            vec3  lighting = texture2D(envmap, vec2(atan( normal.z,  normal.x) * 0.15915494309 + 0.5, asin( normal.y) * 0.31830988618 + 0.5)).xyz; \n\
+            \n\
+            if (tindex < 0.5) \n\
+            { \n\
+                vec3 bNormal = normal; \n\
+                if      (uvw.x == dist) { bNormal += (tangent * px.x + bitangent * px.y) * 0.65; } \n\
+                else if (uvw.y == dist) { bNormal += (tangent * py.x + bitangent * py.y) * 0.65; } \n\
+                else                    { bNormal += (tangent * pz.x + bitangent * pz.y) * 0.65; } \n\
+                bNormal = normalize(bNormal); \n\
+                vec3 bLighting = texture2D(envmap, vec2(atan(bNormal.z, bNormal.x) * 0.15915494309 + 0.5, asin(bNormal.y) * 0.31830988618 + 0.5)).xyz; \n\
+                lighting = mix(lighting, bLighting, smoothstep(border, border - eps, dist)); \n\
+                edgeStrength = 0.0; \n\
+                lighting += vec3(0.1, 0.1, 0.1); \n\
+            } \n\
+            \n\
+            vec3 color = lighting; \n\
+            color = mix(color, vec3(0.0, 0.0, 0.0), edgeStrength); \n\
+            \n\
+            vec2 rot = normalize(vec2(dFdx(outuv.x),dFdy(outuv.x))); \n\
+            vec2 uv = vec2(dot(rot,outuv),dot(vec2(-rot.y,rot.x),outuv)); \n\
+            uv = clamp(uv*0.5+0.5,vec2(0,0),vec2(1,1)); \n\
+            \n\
+            float tind = floor(mod(tindex, 16.0)); \n\
+            vec2 uvOffset = vec2(fract(tind*0.25), floor(tind*0.25)*0.25); \n\
+            vec4 tex = texture2D(tiles, uv*0.25 + uvOffset); \n\
+            color = mix(color,tex.rgb,tex.a); \n\
+            \n\
+            gl_FragColor = vec4(tindex/17.0,color.gb, 1.0); \n\
+        } \n\
     ");
     gl.compileShader(fs);
     if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) return alert(gl.getShaderInfoLog(fs));
@@ -566,26 +586,38 @@ Render.init = function ()
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return alert("oops link");
 
     var envmap = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, envmap);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+                  new Uint8Array([255, 0, 0, 255])); // red
     envmap.image = new Image();
     envmap.image.onload = function ()
     {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, envmap);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, envmap.image);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, envmap.image);
     };
     envmap.image.src = "envmap.jpg";
 
     var tiles = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, tiles);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+                  new Uint8Array([255, 0, 0, 255])); // red
     tiles.image = new Image();
     tiles.image.onload = function ()
     {
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, tiles);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tiles.image);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
         gl.generateMipmap(gl.TEXTURE_2D);
     };
     tiles.image.src = Config.tiles;
@@ -600,13 +632,13 @@ Render.init = function ()
     gl.bufferData(gl.ARRAY_BUFFER, Board.vertexBuffer, gl.STATIC_DRAW);
     var posAttr = gl.getAttribLocation(program, "position");
     var metaAttr = gl.getAttribLocation(program, "meta");
-    //var uvAttr = gl.getAttribLocation(program, "inuv");
+    var uvAttr = gl.getAttribLocation(program, "inuv");
     gl.enableVertexAttribArray(posAttr);
     gl.enableVertexAttribArray(metaAttr);
-    gl.enableVertexAttribArray(2);
+    gl.enableVertexAttribArray(uvAttr);
     gl.vertexAttribPointer(posAttr,  4, gl.FLOAT, false, Board.stride * 4, 0 * 4);
     gl.vertexAttribPointer(metaAttr, 3, gl.FLOAT, false, Board.stride * 4, 4 * 4);
-    gl.vertexAttribPointer(2,   2, gl.FLOAT, false, Board.stride * 4, 7 * 4);
+    gl.vertexAttribPointer(uvAttr,   2, gl.FLOAT, false, Board.stride * 4, 7 * 4);
 
     var envsampler = gl.getUniformLocation(program, "envmap");
     gl.activeTexture(gl.TEXTURE0);
@@ -621,6 +653,10 @@ Render.init = function ()
     Render.projection = gl.getUniformLocation(program, "projection");
     Render.rotation = gl.getUniformLocation(program, "rotation");
     Render.layback = gl.getUniformLocation(program, "layback");
+    Render.state = gl.getUniformLocation(program, "state");
+
+    var mask = gl.getUniformLocation(program, "mask");
+    gl.uniform4fv(mask, new Float32Array([1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1]));
 };
 
 function renderMain()
@@ -649,6 +685,7 @@ function renderMain()
     gl.uniformMatrix4fv(Render.projection, false, new Float32Array(State.proj));
     gl.uniformMatrix4fv(Render.rotation, false, new Float32Array(State.rotation));
     gl.uniform1f(Render.layback, State.layback);
+    gl.uniform4fv(Render.state, Board.state);
 
     gl.drawArrays(gl.TRIANGLES, 0, Board.triangles.length * 3);
 }
