@@ -568,12 +568,12 @@ Render.init = function ()
             vec2 uv = vec2(dot(rot,outuv),dot(vec2(-rot.y,rot.x),outuv)); \n\
             uv = clamp(uv*0.5+0.5,vec2(0,0),vec2(1,1)); \n\
             \n\
-            float tind = floor(mod(tindex, 16.0)); \n\
+            float tind = floor(mod(tindex+0.01,16.0)); \n\
             vec2 uvOffset = vec2(fract(tind*0.25), floor(tind*0.25)*0.25); \n\
             vec4 tex = texture2D(tiles, uv*0.25 + uvOffset); \n\
             color = mix(color,tex.rgb,tex.a); \n\
             \n\
-            gl_FragColor = vec4(tindex/17.0,color.gb, 1.0); \n\
+            gl_FragColor = vec4(color, 1.0); \n\
         } \n\
     ");
     gl.compileShader(fs);
