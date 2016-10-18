@@ -25,9 +25,10 @@ var Config = (function(){
     return {
         divisions: query_string["divisions"] || 3,
         mines: query_string["mines"] || 106,
-        fov: query_string["fov"] || 120,
+        fov: query_string["fov"] || 100,
         layback: query_string["layback"] || 1,
-        normalize: !query_string["dont_normalize"]
+        normalize: !query_string["dont_normalize"],
+        tiles: query_string["tiles"] || "tiles_en.png"
     };
 })();
 
@@ -227,8 +228,7 @@ var State = {
     startTime: 0,
     timer: 0,
     proj:     [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
-    rotation: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
-    laybackCount: 10
+    rotation: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 };
 
 var MouseButtons = {
@@ -240,7 +240,6 @@ var Input = (function(){
     var Input = {
         mouseDown: {},
         dragging: false,
-        deltaY: 0,
         dragStart: [0, 0],
         mousePos: [0, 0]
     };
@@ -253,10 +252,6 @@ var Input = (function(){
     {
         e.preventDefault();
     }, false);
-    //document.addEventListener('wheel', function (e)
-    //{
-    //    Input.deltaY += e.deltaY;
-    //}, false);
     document.addEventListener('mousedown', function (e)
     {
         Input.mousePos = [e.clientX, e.clientY];
@@ -437,9 +432,7 @@ function mainloop()
         State.timer = Math.floor((Date.now() - State.startTime) / 1000);
     }
 
-    State.laybackCount = Math.max(0, Math.min(10, State.laybackCount + Input.deltaY * 0.02));
-    State.layback = State.laybackCount * Board.maxLayback * Config.layback / 10;
-    Input.deltaY = 0;
+    State.layback = Board.maxLayback * Config.layback;
 
     if (Input.dragging)
     {
@@ -534,7 +527,7 @@ Render.init = function ()
             \
             vec3  lighting = texture2D(envmap, vec2(atan( normal.z,  normal.x) * 0.15915494309 + 0.5, asin( normal.y) * 0.31830988618 + 0.5)).xyz; \
             \
-            float tindex = mod(floor(outpos.w / 24.0), 17.0); \
+            float tindex = 0.0; \
             if (tindex == 0.0) \
             { \
                 vec3 bNormal = normal; \
@@ -595,7 +588,7 @@ Render.init = function ()
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tiles.image);
         gl.generateMipmap(gl.TEXTURE_2D);
     };
-    tiles.image.src = "tiles.png";
+    tiles.image.src = Config.tiles;
 
     Render.program = program;
     Render.envmap = envmap;
