@@ -24,9 +24,9 @@ var Config = (function(){
     }
     return {
         divisions: query_string["divisions"] || 3,
-        mines: query_string["mines"] || 106,
-        fov: query_string["fov"] || 100,
-        layback: query_string["layback"] || 1,
+        mines: query_string["mines"] || 200,
+        fov: query_string["fov"] || 90,
+        layback: query_string["layback"] || 0.5,
         normalize: !query_string["dont_normalize"],
         tiles: query_string["tiles"] || "tiles_en.png"
     };
@@ -152,6 +152,32 @@ var Board = (function(){
         divide();
     }
 
+    // iterate the tiles adjacent to this one (including vertices, aka the visible set of a bomb)
+    Board.iter = function (index, cb)
+    {
+        var tri = Board.triangles[index];
+        var visited = {};
+        visited[index] = true;
+        for (var i = 0; i < 3; ++i)
+        {
+            var prev = index;
+            var cur = tri.ni[i];
+            while (!visited[cur] || prev == index)
+            {
+                if (!visited[cur])
+                {
+                    cb(cur);
+                    visited[cur] = true;
+                }
+                var ntri = Board.triangles[cur];
+                var ne = ntri.ni.indexOf(prev);
+                var next = ntri.ni[(ne + 2) % 3];
+                prev = cur;
+                cur = next;
+            }
+        }
+    };
+
     function sub(a,b)
     {
         return [a[0]-b[0],a[1]-b[1],a[2]-b[2]];
@@ -178,14 +204,47 @@ var Board = (function(){
         }
     }
 
+    // state is visible, and passed to shader for rendering
+    // hiddenState is the 'true' state of the board and never changes, and contains no flags, q-marks or unpressed
     Board.state = new Float32Array(Math.ceil(Board.triangles.length / 4) * 4);
+    Board.hiddenState = new Uint8Array(Board.triangles.length);
+    var bombIndices = new Uint16Array(Board.triangles.length);
+    for (var i = 0; i < Board.triangles.length; ++i)
+    {
+        var j = Math.floor(Math.random() * (i + 1));
+        bombIndices[i] = bombIndices[j];
+        bombIndices[j] = i;
+    }
+    var BOMB = 13;
+    var FLAG = 14;
+    var QMARK = 15;
+    var UNPRESSED = 16;
+    for (var i = 0; i < Config.mines; ++i)
+    {
+        Board.hiddenState[bombIndices[i]] = BOMB;
+    }
+    // generate counts in hiddenstate
+    for (var i = 0; i < Config.mines; ++i)
+    {
+        Board.iter(bombIndices[i], function (j)
+        {
+            if (Board.hiddenState[j] != BOMB)
+            {
+                ++Board.hiddenState[j];
+            }
+        });
+    }
+
+    for (var i = 0; i < Board.triangles.length; ++i)
+    {
+        Board.state[i] = Board.hiddenState[i];//UNPRESSED;
+    }
 
     Board.maxLayback = 1.0;
     Board.stride = 9;
     Board.vertexBuffer = new Float32Array(Board.triangles.length * 3 * Board.stride);
     for (var i = 0; i < Board.triangles.length; ++i)
     {
-        Board.state[i] = i % 17;
         var v0 = Board.triangles[i].vi[0];
         var v1 = Board.triangles[i].vi[1];
         var v2 = Board.triangles[i].vi[2];
@@ -548,7 +607,7 @@ Render.init = function ()
             \n\
             vec3  lighting = texture2D(envmap, vec2(atan( normal.z,  normal.x) * 0.15915494309 + 0.5, asin( normal.y) * 0.31830988618 + 0.5)).xyz; \n\
             \n\
-            if (tindex < 0.5) \n\
+            if (tindex > 15.5) \n\
             { \n\
                 vec3 bNormal = normal; \n\
                 if      (uvw.x == dist) { bNormal += (tangent * px.x + bitangent * px.y) * 0.65; } \n\
