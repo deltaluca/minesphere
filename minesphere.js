@@ -237,7 +237,7 @@ var Board = (function(){
 
     for (var i = 0; i < Board.triangles.length; ++i)
     {
-        Board.state[i] = Board.hiddenState[i];//UNPRESSED;
+        Board.state[i] = UNPRESSED;
     }
 
     Board.maxLayback = 1.0;
@@ -568,7 +568,7 @@ Render.init = function ()
             vec3 dist = tril * 2.0 * area / dot(tril, meta.xyz); \n\
             uvw = dist; \n\
             outuv = inuv; \n\
-            outpos = position.xyz; \n\
+            outpos = (rotation * vec4(position.xyz, 1.0)).xyz; \n\
             float tri = floor(position.w / 3.0); \n\
             tindex = dot(state[int(floor(tri * 0.25))], mask[int(fract(tri * 0.25) * 4.0)]); \n\
         } \n\
@@ -605,6 +605,10 @@ Render.init = function ()
             float dist = min(uvw.x, min(uvw.y, uvw.z)); \n\
             float edgeStrength = smoothstep(eps, 0.0, dist) * 0.05; \n\
             \n\
+            if (tindex < 15.5) \n\
+            { \n\
+                normal = normalize(outpos + normal); \n\
+            } \n\
             vec3  lighting = texture2D(envmap, vec2(atan( normal.z,  normal.x) * 0.15915494309 + 0.5, asin( normal.y) * 0.31830988618 + 0.5)).xyz; \n\
             \n\
             if (tindex > 15.5) \n\
