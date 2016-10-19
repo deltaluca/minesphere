@@ -32,6 +32,21 @@ var Config = (function(){
     };
 })();
 
+var PlayState = {
+    START  : 0,
+    PlAYING: 1,
+    WON    : 2,
+    LOST   : 3
+};
+var State = {
+    state: PlayState.START,
+    minesRemaining: 0,
+    startTime: 0,
+    timer: 0,
+    proj:     [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    rotation: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+};
+
 var Board = (function(){
     var Board = {};
 
@@ -92,16 +107,29 @@ var Board = (function(){
     }
     // plus 3 triangle neighbour indices, clockwise starting from the edge clockwise of the first vertex
     // this allows us to keep track of triangle adjacencies throughout the subdivision process
-    // as well as having an easy way to iterate around vertices
+    // as well as having an easy way to nterate around vertices
     Board.triangles = [];
+    // the search set is used for quickly getting the intersecting tile at mouse position
+    // by intersecting the sphere surface to get our 'normal' direction at the intersection
+    // point and then recursively going down the subdivision tree choosing the triangle
+    // with smallest normal
+    Board.searchTree = [];
+    var divisionNodes = [];
     for (var i = 0; i < tris.length; ++i)
     {
+        var vi = [ vertices[tris[i][0]], vertices[tris[i][1]], vertices[tris[i][2]] ];
         Board.triangles.push({
-            vi: [ vertices[tris[i][0]], vertices[tris[i][1]], vertices[tris[i][2]] ],
+            vi: vi,
             ni: [ getEdge(tris[i][0], tris[i][1]),
                   getEdge(tris[i][1], tris[i][2]),
                   getEdge(tris[i][2], tris[i][0]) ]
         });
+        Board.searchTree.push({
+            normal: calcNormal(vi),
+            index: i,
+            children: []
+        });
+        divisionNodes.push(Board.searchTree[i]);
     }
     function divide()
     {
@@ -116,6 +144,7 @@ var Board = (function(){
             ret[2] *= rl;
             return ret;
         }
+        var newDivisionNodes = [];
         var newTriangles = [];
         for (var i = 0; i < Board.triangles.length; ++i)
         {
@@ -144,8 +173,15 @@ var Board = (function(){
                 { vi: [ v4, v1, v5 ], ni: [ n0 + e0, n1 + ((e1 + 1) % 3), ti + 3 ] },
                 { vi: [ v3, v5, v2 ], ni: [ ti + 3, n1 + e1, n2 + ((e2 + 1) % 3) ] },
                 { vi: [ v3, v4, v5 ], ni: [ ti + 0, ti + 1, ti + 2 ] });
+            divisionNodes[i].children = [
+                { normal: calcNormal(newTriangles[ti + 0].vi), index: ti + 0, children: [] },
+                { normal: calcNormal(newTriangles[ti + 1].vi), index: ti + 1, children: [] },
+                { normal: calcNormal(newTriangles[ti + 2].vi), index: ti + 2, children: [] },
+                { normal: calcNormal(newTriangles[ti + 3].vi), index: ti + 3, children: [] }];
+            newDivisionNodes = newDivisionNodes.concat(divisionNodes[i].children);
         }
         Board.triangles = newTriangles;
+        divisionNodes = newDivisionNodes;
     }
     for (var i = 0; i < Config.divisions; ++i)
     {
@@ -177,31 +213,35 @@ var Board = (function(){
             }
         }
     };
+    Board.intersect = function (screenPos)
+    {
+        var normal = unit(transform(State.rotation, intersect(screenPos)));
+        var search = Board.searchTree;
+        var result = -1;
+        while (search.length > 0)
+        {
+            // reset at each recursion
+            var bestIndex = -1;
+            var bestAngle = -1e100;
+            for (var i = 0; i < search.length; ++i)
+            {
+                var angle = dot(search[i].normal, normal);
+                if (angle > bestAngle)
+                {
+                    bestAngle = angle;
+                    bestIndex = i;
+                }
+            }
+            result = search[bestIndex].index;
+            search = search[bestIndex].children;
+        }
+        return result;
+    };
 
-    function sub(a,b)
-    {
-        return [a[0]-b[0],a[1]-b[1],a[2]-b[2]];
-    }
-    function dot(a,b)
-    {
-        return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
-    }
-    function distance(a,b) { var d = sub(a,b); return Math.sqrt(dot(d,d)); }
     function uv(ic,t,b,v,ir)
     {
         var c = sub(v,ic);
         return [dot(c,t)/ir,dot(c,b)/ir];
-    }
-
-    var bins = 20;
-    Board.lookup = [];
-    for (var i = 0; i < bins; ++i)
-    {
-        Board.lookup[i] = [];
-        for (var j = 0; j < bins; ++j)
-        {
-            Board.lookup[i][j] = [];
-        }
     }
 
     // state is visible, and passed to shader for rendering
@@ -263,7 +303,7 @@ var Board = (function(){
                   (v0[2] * sides[0] + v1[2] * sides[1] + v2[2] * sides[2]) / p];
         var ir = area / s;
 
-        var n = unit(cross(sub(v1,v0),sub(v2,v0)));
+        var n = calcNormal(Board.triangles[i].vi);
         if (n[0] == 0 && n[2] == 0) throw "";
         var t = unit([-n[2],0,n[0]]);
         var b = cross(n,t);
@@ -288,21 +328,6 @@ var Board = (function(){
 
     return Board;
 })();
-
-var PlayState = {
-    START  : 0,
-    PlAYING: 1,
-    WON    : 2,
-    LOST   : 3
-};
-var State = {
-    state: PlayState.START,
-    minesRemaining: 0,
-    startTime: 0,
-    timer: 0,
-    proj:     [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
-    rotation: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
-};
 
 var MouseButtons = {
     LEFT   : 0,
@@ -380,7 +405,7 @@ function screenDir(screenPos)
     return unit([ ndc[0] / State.proj[0], ndc[1] / State.proj[5], -1]);
 }
 
-function rot(screenPos)
+function intersect(screenPos)
 {
     var dir = screenDir(screenPos);
     // u + tv ^ 2 = 1
@@ -393,12 +418,30 @@ function rot(screenPos)
     dir[0] *= t;
     dir[1] *= t;
     dir[2] = (State.layback + dir[2] * t);
+    return unit(dir);
+}
+function rot(screenPos)
+{
+    var dir = intersect(screenPos);
     var side = unit([-dir[2], 0, dir[0]]);
     var up = cross(dir, side);
     return [side[0], side[1], side[2], 0,
             up[0], up[1], up[2], 0,
             dir[0], dir[1], dir[2], 0,
             0, 0, 0, 1];
+}
+function sub(a,b)
+{
+    return [a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+}
+function dot(a,b)
+{
+    return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+}
+function distance(a,b) { var d = sub(a,b); return Math.sqrt(dot(d,d)); }
+function calcNormal(vs)
+{
+    return unit(cross(sub(vs[1],vs[0]),sub(vs[2],vs[0])));
 }
 function inv(m)
 {
@@ -467,6 +510,13 @@ function cross(a, b)
             a[0]*b[1]-a[1]*b[0],
             0];
 }
+function transform(m, v)
+{
+    return [ m[0]*v[0]+ m[1]*v[1]+ m[2]*v[2]+ m[3]*v[3],
+             m[4]*v[0]+ m[5]*v[1]+ m[6]*v[2]+ m[7]*v[3],
+             m[8]*v[0]+ m[9]*v[1]+m[10]*v[2]+m[11]*v[3],
+            m[12]*v[0]+m[13]*v[1]+m[14]*v[2]+m[15]*v[3]];
+}
 function norm(a)
 {
     var z = unit([a[8],a[9],a[10]]);
@@ -522,6 +572,9 @@ function mainloop()
         State.rotation = mul(State.rotation, offset);
         State.rotation = norm(State.rotation);
     }
+
+    var index = Board.intersect(Input.mousePos);
+    Board.state[index] = 0;
 
     renderMain();
     renderHUD()
@@ -611,7 +664,7 @@ Render.init = function ()
             } \n\
             vec3  lighting = texture2D(envmap, vec2(atan( normal.z,  normal.x) * 0.15915494309 + 0.5, asin( normal.y) * 0.31830988618 + 0.5)).xyz; \n\
             \n\
-            if (tindex > 15.5) \n\
+            if (tindex > 15.5 && tindex < 16.5) \n\
             { \n\
                 vec3 bNormal = normal; \n\
                 if      (uvw.x == dist) { bNormal += (tangent * px.x + bitangent * px.y) * 0.65; } \n\
@@ -741,8 +794,8 @@ function renderMain()
     var f = Math.tan(Math.PI * 0.5 - 0.5 * fov);
     var ri = 1 / (near - far);
     State.proj = [
-        f / aspect, 0, 0, 0,
-        0, f, 0, 0,
+        f , 0, 0, 0,
+        0, f * aspect, 0, 0,
         0, 0, (far + near) * ri, -1,
         0, 0, 2 * near * far * ri, 0];
     gl.uniformMatrix4fv(Render.projection, false, new Float32Array(State.proj));
