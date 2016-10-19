@@ -162,9 +162,14 @@ var Board = (function(){
     {
         divide();
     }
+
+    Board.searchTriangles = [];
     for (var i = 0; i < Board.triangles.length; ++i)
     {
-        Board.triangles[i].planes = calcTriPlanes(Board.triangles[i].vi);
+        Board.searchTriangles.push({
+            index: i,
+            planes: calcTriPlanes(Board.triangles[i].vi)
+        });
     }
 
     // iterate the tiles adjacent to this one (including vertices, aka the visible set of a bomb)
@@ -194,11 +199,37 @@ var Board = (function(){
     };
     Board.intersect = function (screenPos)
     {
+        // as we search for the intersecting triangle
+        // we sort the partial list as we go to try and improve performance over time
+        // making the assumption that screenPos/rotation doesn't change 'too' quickly
+        // (since player will scroll the rotation, or scroll the mouse, not randomnly
+        //  jump and move the sphere at random large rotational intervals)
+        //
+        // we sort the triangles by 'distance from plane' so that triangles for which
+        // the point is furthest behind come first in the list as a good hueristic on
+        // where the itnersecting triangle will be (but not precise of course or else
+        // we'd just do that for the intersection!). using the intersection with the
+        // true sphere as the seed for the metric.
+        var sortPoint = transform(State.rotation, intersect(screenPos));
         var dir = transform(State.rotation, screenDir(screenPos));
         var pos = transform(State.rotation, [0, 0, State.layback, 1]);
-        for (var i = 0; i < Board.triangles.length; ++i)
+        for (var i = 0; i < Board.searchTriangles.length; ++i)
         {
-            var s = Board.triangles[i].planes;
+            var cand = Board.searchTriangles[i];
+            var s = cand.planes;
+
+            if (i > 0)
+            {
+                cand.sortMetric = s.plane.d - dot(sortPoint, s.plane.n);
+                var j = i - 1;
+                while (j >= 0 && Board.searchTriangles[j].sortMetric > cand.sortMetric)
+                {
+                    Board.searchTriangles[j + 1] = Board.searchTriangles[j];
+                    --j;
+                }
+                Board.searchTriangles[j + 1] = cand;
+            }
+
             var t = (s.plane.d - dot(pos, s.plane.n)) / dot(dir, s.plane.n);
             if (t <= 0)
             {
@@ -216,7 +247,7 @@ var Board = (function(){
             }
             if (all)
             {
-                return i;
+                return cand.index;
             }
         }
         return -1;
@@ -826,7 +857,7 @@ function renderHUD()
 
     function fillText(value)
     {
-        var str = value.toString();
+        var str = (Math.floor(value)).toString();
         while (str.length < 3)
         {
             str = "0" + str;
