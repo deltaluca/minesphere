@@ -109,42 +109,24 @@ var Board = (function(){
     // this allows us to keep track of triangle adjacencies throughout the subdivision process
     // as well as having an easy way to nterate around vertices
     Board.triangles = [];
-    // the search set is used for quickly getting the intersecting tile at mouse position
-    // by intersecting the sphere surface to get our 'normal' direction at the intersection
-    // point and then recursively going down the subdivision tree choosing the triangle
-    // with smallest normal
-    Board.searchTree = [];
-    var divisionNodes = [];
     for (var i = 0; i < tris.length; ++i)
     {
-        var vi = [ vertices[tris[i][0]], vertices[tris[i][1]], vertices[tris[i][2]] ];
         Board.triangles.push({
-            vi: vi,
+            vi: [ vertices[tris[i][0]], vertices[tris[i][1]], vertices[tris[i][2]] ],
             ni: [ getEdge(tris[i][0], tris[i][1]),
                   getEdge(tris[i][1], tris[i][2]),
                   getEdge(tris[i][2], tris[i][0]) ]
         });
-        Board.searchTree.push({
-            normal: calcNormal(vi),
-            index: i,
-            children: []
-        });
-        divisionNodes.push(Board.searchTree[i]);
     }
     function divide()
     {
         function unitAverage(u, v)
         {
-            var ret = [ u[0] + v[0],
-                        u[1] + v[1],
-                        u[2] + v[2] ];
-            var rl = Config.normalize ? 1 / Math.sqrt(ret[0] * ret[0] + ret[1] * ret[1] + ret[2] * ret[2]) : 0.5;
-            ret[0] *= rl;
-            ret[1] *= rl;
-            ret[2] *= rl;
-            return ret;
+            var ret = [ (u[0] + v[0]) * 0.5,
+                        (u[1] + v[1]) * 0.5,
+                        (u[2] + v[2]) * 0.5 ];
+            return Config.normalize ? unit(ret) : ret;
         }
-        var newDivisionNodes = [];
         var newTriangles = [];
         for (var i = 0; i < Board.triangles.length; ++i)
         {
@@ -173,19 +155,16 @@ var Board = (function(){
                 { vi: [ v4, v1, v5 ], ni: [ n0 + e0, n1 + ((e1 + 1) % 3), ti + 3 ] },
                 { vi: [ v3, v5, v2 ], ni: [ ti + 3, n1 + e1, n2 + ((e2 + 1) % 3) ] },
                 { vi: [ v3, v4, v5 ], ni: [ ti + 0, ti + 1, ti + 2 ] });
-            divisionNodes[i].children = [
-                { normal: calcNormal(newTriangles[ti + 0].vi), index: ti + 0, children: [] },
-                { normal: calcNormal(newTriangles[ti + 1].vi), index: ti + 1, children: [] },
-                { normal: calcNormal(newTriangles[ti + 2].vi), index: ti + 2, children: [] },
-                { normal: calcNormal(newTriangles[ti + 3].vi), index: ti + 3, children: [] }];
-            newDivisionNodes = newDivisionNodes.concat(divisionNodes[i].children);
         }
         Board.triangles = newTriangles;
-        divisionNodes = newDivisionNodes;
     }
     for (var i = 0; i < Config.divisions; ++i)
     {
         divide();
+    }
+    for (var i = 0; i < Board.triangles.length; ++i)
+    {
+        Board.triangles[i].planes = calcTriPlanes(Board.triangles[i].vi);
     }
 
     // iterate the tiles adjacent to this one (including vertices, aka the visible set of a bomb)
@@ -215,27 +194,32 @@ var Board = (function(){
     };
     Board.intersect = function (screenPos)
     {
-        var normal = unit(transform(State.rotation, intersect(screenPos)));
-        var search = Board.searchTree;
-        var result = -1;
-        while (search.length > 0)
+        var dir = transform(State.rotation, screenDir(screenPos));
+        var pos = transform(State.rotation, [0, 0, State.layback, 1]);
+        for (var i = 0; i < Board.triangles.length; ++i)
         {
-            // reset at each recursion
-            var bestIndex = -1;
-            var bestAngle = -1e100;
-            for (var i = 0; i < search.length; ++i)
+            var s = Board.triangles[i].planes;
+            var t = (s.plane.d - dot(pos, s.plane.n)) / dot(dir, s.plane.n);
+            if (t <= 0)
             {
-                var angle = dot(search[i].normal, normal);
-                if (angle > bestAngle)
+                continue;
+            }
+            var p = [pos[0] + dir[0]*t, pos[1] + dir[1]*t, pos[2] + dir[2]*t];
+            var all = true;
+            for (var k = 0; k < s.edges.length; ++k)
+            {
+                if (dot(s.edges[k].n, p) < s.edges[k].d)
                 {
-                    bestAngle = angle;
-                    bestIndex = i;
+                    all = false;
+                    break;
                 }
             }
-            result = search[bestIndex].index;
-            search = search[bestIndex].children;
+            if (all)
+            {
+                return i;
+            }
         }
-        return result;
+        return -1;
     };
 
     function uv(ic,t,b,v,ir)
@@ -288,10 +272,9 @@ var Board = (function(){
         var v0 = Board.triangles[i].vi[0];
         var v1 = Board.triangles[i].vi[1];
         var v2 = Board.triangles[i].vi[2];
-        var x = (v0[0] + v1[0] + v2[0]) / 3;
-        var y = (v0[1] + v1[1] + v2[1]) / 3;
-        var z = (v0[2] + v1[2] + v2[2]) / 3;
-        Board.maxLayback = Math.min(Board.maxLayback, Math.sqrt(x * x + y * y + z * z));
+
+        var ave = ave3(Board.triangles[i].vi);
+        Board.maxLayback = Math.min(Board.maxLayback, Math.sqrt(dot(ave,ave)));
 
         var sides = [distance(v1, v2), distance(v2, v0), distance(v0, v1)];
         var p = sides[0]+sides[1]+sides[2];
@@ -402,7 +385,7 @@ function screenDir(screenPos)
     var canvas = document.getElementById("canvas");
     var ndc = [  screenPos[0] / canvas.width  * 2 - 1,
                -(screenPos[1] / canvas.height * 2 - 1) ];
-    return unit([ ndc[0] / State.proj[0], ndc[1] / State.proj[5], -1]);
+    return unit([ ndc[0] / State.proj[0], ndc[1] / State.proj[5], -1, 0]);
 }
 
 function intersect(screenPos)
@@ -438,7 +421,23 @@ function dot(a,b)
 {
     return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
 }
+function ave3(vs)
+{
+    return [(vs[0][0] + vs[1][0] + vs[2][0]) / 3,
+            (vs[0][1] + vs[1][1] + vs[2][1]) / 3,
+            (vs[0][2] + vs[1][2] + vs[2][2]) / 3];
+}
 function distance(a,b) { var d = sub(a,b); return Math.sqrt(dot(d,d)); }
+function calcTriPlanes(vs)
+{
+    var n = calcNormal(vs);
+    function plane(v0, v1)
+    {
+        var dir = cross(sub(v1, v0), n);
+        return { n: dir, d: dot(dir, v0) };
+    }
+    return { plane: { n: n, d: dot(n, vs[0]) }, edges: [ plane(vs[1],vs[0]), plane(vs[2],vs[1]), plane(vs[0],vs[2]) ] };
+}
 function calcNormal(vs)
 {
     return unit(cross(sub(vs[1],vs[0]),sub(vs[2],vs[0])));
@@ -574,7 +573,10 @@ function mainloop()
     }
 
     var index = Board.intersect(Input.mousePos);
-    Board.state[index] = 0;
+    if (index != -1)
+    {
+        Board.state[index] = 0;
+    }
 
     renderMain();
     renderHUD()
