@@ -284,7 +284,7 @@ var Board = (function(){
     }
     Board.init = function (selectedIndex)
     {
-        var bombIndices = new Uint16Array(Board.triangles.length);
+        var bombIndices = [];
         for (var i = 0; i < Board.triangles.length; ++i)
         {
             var j = Math.floor(Math.random() * (i + 1));
