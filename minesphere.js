@@ -38,17 +38,31 @@ var PlayState = {
     WON    : 2,
     LOST   : 3
 };
+var InputState = {
+    IDLE    : 0,
+    TOGGLE  : 1,
+    SURROUND: 2,
+    WAITING : 3
+};
 var State = {
     state: PlayState.START,
     minesRemaining: 0,
     startTime: 0,
     timer: 0,
     proj:     [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
-    rotation: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+    rotation: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    inputState: InputState.IDLE
 };
 
 var Board = (function(){
     var Board = {};
+    Board.reset = [];
+
+    Board.MINE = 13;
+    Board.FLAG = 14;
+    Board.QMARK = 15;
+    Board.UNPRESSED = 16;
+    Board.PRESSED = 17;
 
     var X = 1.0;
     var Z = (1.0 + Math.sqrt(5.0)) / 2.0;
@@ -172,9 +186,10 @@ var Board = (function(){
         });
     }
 
-    // iterate the tiles adjacent to this one (including vertices, aka the visible set of a bomb)
+    // iterate the tiles adjacent to this one, including this one (including vertices, aka the visible set of a bomb)
     Board.iter = function (index, cb)
     {
+        cb(index);
         var tri = Board.triangles[index];
         var visited = {};
         visited[index] = true;
@@ -270,20 +285,16 @@ var Board = (function(){
         bombIndices[i] = bombIndices[j];
         bombIndices[j] = i;
     }
-    var BOMB = 13;
-    var FLAG = 14;
-    var QMARK = 15;
-    var UNPRESSED = 16;
     for (var i = 0; i < Config.mines; ++i)
     {
-        Board.hiddenState[bombIndices[i]] = BOMB;
+        Board.hiddenState[bombIndices[i]] = Board.MINE;
     }
     // generate counts in hiddenstate
     for (var i = 0; i < Config.mines; ++i)
     {
         Board.iter(bombIndices[i], function (j)
         {
-            if (Board.hiddenState[j] != BOMB)
+            if (Board.hiddenState[j] != Board.MINE)
             {
                 ++Board.hiddenState[j];
             }
@@ -292,8 +303,59 @@ var Board = (function(){
 
     for (var i = 0; i < Board.triangles.length; ++i)
     {
-        Board.state[i] = UNPRESSED;
+        Board.state[i] = Board.UNPRESSED;
     }
+
+    Board.reveal = function (index)
+    {
+        Board.state[index] = Board.hiddenState[index];
+        if (Board.hiddenState[index] == 0)
+        {
+            Board.iter(index, function (neighbour)
+            {
+                if (index != neighbour && Board.state[neighbour] == Board.UNPRESSED)
+                {
+                    Board.reveal(neighbour);
+                }
+            });
+        }
+        if (Board.state[index] == Board.MINE)
+        {
+            State.state = PlayState.LOST;
+            window.alert(State.state == PlayState.WON ? "YOU WON!" : "HAHA you lose.");
+        }
+        Board.check();
+    };
+
+    Board.check = function ()
+    {
+        if (State.minesRemaining == 0)
+        {
+            var anyUnpressed = false;
+            for (var i = 0; i < Board.state.length; ++i)
+            {
+                if (Board.state[i] == Board.UNPRESSED)
+                {
+                    anyUnpressed = true;
+                    break;
+                }
+            }
+            if (!anyUnpressed)
+            {
+                State.state = PlayState.WON;
+                for (var i = 0; i < Board.state.length; ++i)
+                {
+                    var expected = Board.state[i];
+                    Board.state[i] = Board.hiddenState[i];
+                    if (Board.state[i] == Board.MINE && expected != Board.FLAG)
+                    {
+                        State.state = PlayState.LOST;
+                    }
+                }
+                window.alert(State.state == PlayState.WON ? "YOU WON!" : "HAHA you lose.");
+            }
+        }
+    };
 
     Board.maxLayback = 1.0;
     Board.stride = 9;
@@ -340,6 +402,8 @@ var Board = (function(){
         }
     }
 
+    State.minesRemaining = parseInt(Config.mines);
+
     return Board;
 })();
 
@@ -351,6 +415,7 @@ var MouseButtons = {
 var Input = (function(){
     var Input = {
         mouseDown: {},
+        anyMouseUp: false,
         dragging: false,
         dragStart: [0, 0],
         mousePos: [0, 0]
@@ -397,6 +462,7 @@ var Input = (function(){
     }, false);
     document.addEventListener('mouseup', function (e)
     {
+        Input.anyMouseUp = true;
         Input.mousePos = [e.clientX, e.clientY];
         Input.mouseDown[e.button] = false;
         var down = Input.mouseDown[MouseButtons.LEFT] ||
@@ -603,11 +669,132 @@ function mainloop()
         State.rotation = norm(State.rotation);
     }
 
-    var index = Board.intersect(Input.mousePos);
-    if (index != -1)
+    // reset additional board state values.
+    for (var i = 0; i < Board.reset.length; ++i)
     {
-        Board.state[index] = 0;
+        Board.state[Board.reset[i]] = Board.state[Board.reset[i]] % 17;
     }
+    Board.reset = [];
+
+    if (State.state == PlayState.START || State.state == PlayState.PLAYING)
+    {
+        var selectedIndex = Board.intersect(Input.mousePos);
+        if (State.inputState == InputState.IDLE)
+        {
+            if (!Input.dragging)
+            {
+                if (Input.mouseDown[MouseButtons.RIGHT])
+                {
+                    // toggle a flag
+                    if (selectedIndex != -1 &&
+                        (Board.state[selectedIndex] == Board.UNPRESSED ||
+                         Board.state[selectedIndex] == Board.FLAG))
+                    {
+                        Board.state[selectedIndex] = Board.state[selectedIndex] == Board.UNPRESSED ? Board.FLAG : Board.UNPRESSED;
+                        State.inputState = InputState.WAITING;
+                        State.minesRemaining += Board.state[selectedIndex] == Board.UNPRESSED ? 1 : -1;
+                        Board.check();
+                    }
+                }
+                if (Input.mouseDown[MouseButtons.LEFT])
+                {
+                    State.inputState = InputState.TOGGLE;
+                }
+                if (Input.mouseDown[MouseButtons.MIDDLE])
+                {
+                    State.inputState = InputState.SURROUND;
+                }
+            }
+        }
+        else if (State.inputState == InputState.TOGGLE)
+        {
+            if (Input.mouseDown[MouseButtons.MIDDLE] || Input.mouseDown[MouseButtons.RIGHT])
+            {
+                State.inputState = InputState.SURROUND;
+            }
+            else if (!Input.mouseDown[MouseButtons.LEFT])
+            {
+                // reveal tile if not a flag
+                if (selectedIndex != -1 &&
+                    Board.state[selectedIndex] == Board.UNPRESSED)
+                {
+                    if (State.state != PlayState.PLAYING)
+                    {
+                        State.state = PlayState.PLAYING;
+                        State.startTime = Date.now() - 1000; // start at 1
+                    }
+                    Board.reveal(selectedIndex);
+                }
+                State.inputState = InputState.WAITING;
+            }
+            else if (Input.dragging)
+            {
+                State.inputState = InputState.WAITING;
+            }
+            if (selectedIndex != -1 &&
+                Board.state[selectedIndex] == Board.UNPRESSED)
+            {
+                Board.state[selectedIndex] += Board.PRESSED;
+                Board.reset.push(selectedIndex);
+            }
+        }
+        else if (State.inputState == InputState.SURROUND)
+        {
+            if (Input.anyMouseUp && !Input.mouseDown[MouseButtons.MIDDLE])
+            {
+                // reveal any tiles if satisfied
+                if (selectedIndex != -1 &&
+                    Board.state[selectedIndex] > 0 && Board.state[selectedIndex] < Board.MINE)
+                {
+                    var countBombs = Board.state[selectedIndex];
+                    var countFlags = 0;
+                    Board.iter(selectedIndex, function (index)
+                    {
+                        if (Board.state[index] == Board.FLAG)
+                        {
+                            ++countFlags;
+                        }
+                    });
+                    if (countFlags == countBombs)
+                    {
+                        Board.iter(selectedIndex, function (index)
+                        {
+                            if (Board.state[index] == Board.UNPRESSED)
+                            {
+                                Board.reveal(index);
+                            }
+                        });
+                    }
+                }
+                State.inputState = InputState.WAITING;
+            }
+            else if (Input.dragging)
+            {
+                State.inputState = InputState.WAITING;
+            }
+            if (selectedIndex != -1)
+            {
+                Board.iter(selectedIndex, function (index)
+                {
+                    if (Board.state[index] == Board.UNPRESSED)
+                    {
+                        Board.state[index] += Board.PRESSED;
+                        Board.reset.push(index);
+                    }
+                });
+            }
+        }
+        else
+        {
+            if (!Input.mouseDown[MouseButtons.LEFT] &&
+                !Input.mouseDown[MouseButtons.MIDDLE] &&
+                !Input.mouseDown[MouseButtons.RIGHT])
+            {
+                State.inputState = InputState.IDLE;
+            }
+        }
+    }
+    Input.anyMouseUp = false;
 
     renderMain();
     renderHUD()
@@ -691,13 +878,13 @@ Render.init = function ()
             float dist = min(uvw.x, min(uvw.y, uvw.z)); \n\
             float edgeStrength = smoothstep(eps, 0.0, dist) * 0.05; \n\
             \n\
-            if (tindex < 15.5) \n\
+            if (tindex < 13.5) \n\
             { \n\
                 normal = normalize(outpos + normal); \n\
             } \n\
             vec3  lighting = texture2D(envmap, vec2(atan( normal.z,  normal.x) * 0.15915494309 + 0.5, asin( normal.y) * 0.31830988618 + 0.5)).xyz; \n\
             \n\
-            if (tindex > 15.5 && tindex < 16.5) \n\
+            if (tindex > 13.5 && tindex < 16.5) \n\
             { \n\
                 vec3 bNormal = normal; \n\
                 if      (uvw.x == dist) { bNormal += (tangent * px.x + bitangent * px.y) * 0.65; } \n\
@@ -717,7 +904,8 @@ Render.init = function ()
             vec2 uv = vec2(dot(rot,outuv),dot(vec2(-rot.y,rot.x),outuv)); \n\
             uv = clamp(uv*0.5+0.5,vec2(0,0),vec2(1,1)); \n\
             \n\
-            float tind = floor(mod(tindex+0.01,16.0)); \n\
+            float tind = floor(tindex+0.01); \n\
+            tind = tind > 15.5 ? 0.0 : tind; \n\
             vec2 uvOffset = vec2(fract(tind*0.25), floor(tind*0.25)*0.25); \n\
             vec4 tex = texture2D(tiles, uv*0.25 + uvOffset); \n\
             color = mix(color,tex.rgb,tex.a); \n\
