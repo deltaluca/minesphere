@@ -291,12 +291,12 @@ var Board = (function(){
             bombIndices[i] = bombIndices[j];
             bombIndices[j] = i;
         }
-        var skipped = 0;
-        for (var i = 0; i < Config.mines + skipped; ++i)
+        for (var i = 0; i < Config.mines; ++i)
         {
             if (bombIndices[i] == selectedIndex)
             {
-                skipped = 1;
+                bombIndices.splice(i, 1);
+                --i;
                 continue;
             }
             Board.hiddenState[bombIndices[i]] = Board.MINE;
