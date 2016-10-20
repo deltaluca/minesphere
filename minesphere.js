@@ -278,28 +278,41 @@ var Board = (function(){
     // hiddenState is the 'true' state of the board and never changes, and contains no flags, q-marks or unpressed
     Board.state = new Float32Array(Math.ceil(Board.triangles.length / 4) * 4);
     Board.hiddenState = new Uint8Array(Board.triangles.length);
-    var bombIndices = new Uint16Array(Board.triangles.length);
-    for (var i = 0; i < Board.triangles.length; ++i)
+    if (Config.mines > Board.hiddenState.length)
     {
-        var j = Math.floor(Math.random() * (i + 1));
-        bombIndices[i] = bombIndices[j];
-        bombIndices[j] = i;
+        window.alert("Too many mines");
     }
-    for (var i = 0; i < Config.mines; ++i)
+    Board.init = function (selectedIndex)
     {
-        Board.hiddenState[bombIndices[i]] = Board.MINE;
-    }
-    // generate counts in hiddenstate
-    for (var i = 0; i < Config.mines; ++i)
-    {
-        Board.iter(bombIndices[i], function (j)
+        var bombIndices = new Uint16Array(Board.triangles.length);
+        for (var i = 0; i < Board.triangles.length; ++i)
         {
-            if (Board.hiddenState[j] != Board.MINE)
+            var j = Math.floor(Math.random() * (i + 1));
+            bombIndices[i] = bombIndices[j];
+            bombIndices[j] = i;
+        }
+        var skipped = 0;
+        for (var i = 0; i < Config.mines + skipped; ++i)
+        {
+            if (bombIndices[i] == selectedIndex)
             {
-                ++Board.hiddenState[j];
+                skipped = 1;
+                continue;
             }
-        });
-    }
+            Board.hiddenState[bombIndices[i]] = Board.MINE;
+        }
+        // generate counts in hiddenstate
+        for (var i = 0; i < Config.mines; ++i)
+        {
+            Board.iter(bombIndices[i], function (j)
+            {
+                if (Board.hiddenState[j] != Board.MINE)
+                {
+                    ++Board.hiddenState[j];
+                }
+            });
+        }
+    };
 
     for (var i = 0; i < Board.triangles.length; ++i)
     {
@@ -332,7 +345,7 @@ var Board = (function(){
         if (State.minesRemaining == 0)
         {
             var anyUnpressed = false;
-            for (var i = 0; i < Board.state.length; ++i)
+            for (var i = 0; i < Board.hiddenState.length; ++i)
             {
                 if (Board.state[i] == Board.UNPRESSED)
                 {
@@ -343,13 +356,17 @@ var Board = (function(){
             if (!anyUnpressed)
             {
                 State.state = PlayState.WON;
-                for (var i = 0; i < Board.state.length; ++i)
+                for (var i = 0; i < Board.hiddenState.length; ++i)
                 {
                     var expected = Board.state[i];
                     Board.state[i] = Board.hiddenState[i];
                     if (Board.state[i] == Board.MINE && expected != Board.FLAG)
                     {
                         State.state = PlayState.LOST;
+                    }
+                    else if (Board.state[i] == Board.MINE)
+                    {
+                        Board.state[i] = Board.FLAG;
                     }
                 }
                 window.alert(State.state == PlayState.WON ? "YOU WON!" : "HAHA you lose.");
@@ -722,6 +739,7 @@ function mainloop()
                     {
                         State.state = PlayState.PLAYING;
                         State.startTime = Date.now() - 1000; // start at 1
+                        Board.init(selectedIndex);
                     }
                     Board.reveal(selectedIndex);
                 }
