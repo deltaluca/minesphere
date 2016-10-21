@@ -469,7 +469,7 @@ var Input = (function(){
         {
             var dx = e.clientX - Input.dragStart[0];
             var dy = e.clientY - Input.dragStart[1];
-            if (dx * dx + dy * dy > 5 * 5)
+            if (dx * dx + dy * dy > 50 * 50)
             {
                 Input.dragStart = [e.clientX, e.clientY];
                 Input.dragRot = rot(Input.dragStart);
