@@ -455,13 +455,8 @@ var Input = (function(){
             Input.dragStart = [e.clientX, e.clientY];
         }
     }, false);
-    document.addEventListener('mouseover', function (e)
-    {
-        Input.mousePos = [e.clientX, e.clientY];
-    }, false);
     document.addEventListener('mousemove', function (e)
     {
-        Input.mousePos = [e.clientX, e.clientY];
         var down = Input.mouseDown[MouseButtons.LEFT] ||
                    Input.mouseDown[MouseButtons.MIDDLE] ||
                    Input.mouseDown[MouseButtons.RIGHT];
@@ -476,11 +471,14 @@ var Input = (function(){
                 Input.dragging = true;
             }
         }
+        if (Input.dragging)
+        {
+            Input.mousePos = [e.clientX, e.clientY];
+        }
     }, false);
     document.addEventListener('mouseup', function (e)
     {
         Input.anyMouseUp = true;
-        Input.mousePos = [e.clientX, e.clientY];
         Input.mouseDown[e.button] = false;
         var down = Input.mouseDown[MouseButtons.LEFT] ||
                    Input.mouseDown[MouseButtons.MIDDLE] ||
@@ -750,7 +748,8 @@ function mainloop()
                 State.inputState = InputState.WAITING;
             }
             if (selectedIndex != -1 &&
-                Board.state[selectedIndex] == Board.UNPRESSED)
+                Board.state[selectedIndex] == Board.UNPRESSED &&
+                !Input.dragging)
             {
                 Board.state[selectedIndex] += Board.PRESSED;
                 Board.reset.push(selectedIndex);
@@ -790,7 +789,8 @@ function mainloop()
             {
                 State.inputState = InputState.WAITING;
             }
-            if (selectedIndex != -1)
+            if (selectedIndex != -1 &&
+                !Input.dragging)
             {
                 Board.iter(selectedIndex, function (index)
                 {
