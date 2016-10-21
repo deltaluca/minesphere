@@ -448,7 +448,10 @@ var Input = (function(){
     }, false);
     document.addEventListener('mousedown', function (e)
     {
-        Input.mousePos = [e.clientX, e.clientY];
+        if (State.inputState == InputState.IDLE)
+        {
+            Input.mousePos = [e.clientX, e.clientY];
+        }
         Input.mouseDown[e.button] = true;
         if (!Input.dragging)
         {
